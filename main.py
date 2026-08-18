@@ -18,13 +18,11 @@ if 'CLIENT_SECRET_JSON' in os.environ:
 # --- 2. DÜNYA GENELİ TREND KONUYU ÇEK (İngilizce) ---
 print("🔍 Fetching global trends...")
 try:
-    # Wikipedia en çok okunan İngilizce trend başlığı çeker
     url = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/2026/08/17"
     headers = {'User-Agent': 'Mozilla/5.0'}
     response = requests.get(url, headers=headers).json()
     articles = response['items'][0]['articles']
     
-    # Ana sayfa ve genel kelimeleri filtrele
     ignore_list = ['Main_Page', 'Special:Search', 'Deaths_in_2026', 'Wikipedia:Featured_pictures']
     filtered_articles = [a['article'].replace('_', ' ') for a in articles if a['article'] not in ignore_list]
     
@@ -44,10 +42,8 @@ tts.save(audio_path)
 audio_clip = AudioFileClip(audio_path)
 duration = audio_clip.duration
 
-# 1080x1920 Dikey Shorts Arka Planı (Koyu Lacivert)
 background = ColorClip(size=(1080, 1920), color=(15, 23, 42), duration=duration)
 
-# Ekrana Trend Başlığı Yazma
 txt_clip = TextClip(f"🔥 GLOBAL TREND\n\n{trend_topic}", fontsize=70, color='white', font='Arial-Bold', method='caption', size=(900, None))
 txt_clip = txt_clip.set_position('center').set_duration(duration)
 
