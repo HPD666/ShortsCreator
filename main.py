@@ -2,11 +2,9 @@ import os
 import json
 import requests
 from gtts import gTTS
-# MoviePy yeni sürümlere uygun import yapısı
-from moviepy.video.VideoClip import ColorClip
+from moviepy.video.VideoClip import ColorClip, TextClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
-from moviepy.video.VideoClip import TextClip
 
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -50,11 +48,17 @@ duration = audio_clip.duration
 # Dikey Shorts Arka Planı
 background = ColorClip(size=(1080, 1920), color=(15, 23, 42), duration=duration)
 
-# Metin Görseli Oluşturma
-txt_clip = TextClip(f"🔥 GLOBAL TREND\n\n{trend_topic}", fontsize=60, color='white', size=(900, None), method='caption')
-txt_clip = txt_clip.set_position('center').set_duration(duration)
+# Metin Görseli Oluşturma (MoviePy v2 Uyumlu)
+txt_clip = TextClip(
+    text=f"🔥 GLOBAL TREND\n\n{trend_topic}",
+    font_size=60,
+    color='white',
+    size=(900, None),
+    method='caption'
+)
+txt_clip = txt_clip.with_position('center').with_duration(duration)
 
-final_video = CompositeVideoClip([background, txt_clip]).set_audio(audio_clip)
+final_video = CompositeVideoClip([background, txt_clip]).with_audio(audio_clip)
 video_path = "short_video.mp4"
 final_video.write_videofile(video_path, fps=24, codec='libx264', audio_codec='aac')
 
