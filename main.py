@@ -3,10 +3,11 @@ import json
 import urllib.parse
 import requests
 import random
+import time
 from datetime import datetime, timedelta
 from gtts import gTTS
 
-# MoviePy v2 için doğru import yapısı
+# MoviePy v2 importları
 from moviepy import ColorClip, TextClip, ImageClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
 
 from googleapiclient.discovery import build
@@ -43,7 +44,7 @@ except Exception as e:
 print(f"🔥 Global Trend Topic: {trend_topic}")
 
 # --- 3. İNGİLİZCE SES DOSYASINI OLUŞTUR ---
-text_to_speech = f"Did you know about this? Today's top trending topic worldwide is {trend_topic}. Stay tuned for daily updates!"
+text_to_speech = f"Check this out! Today's top global trend is {trend_topic}. What do you think about this?"
 tts = gTTS(text=text_to_speech, lang='en')
 audio_path = "voice.mp3"
 tts.save(audio_path)
@@ -51,48 +52,79 @@ tts.save(audio_path)
 voice_clip = AudioFileClip(audio_path)
 total_duration = voice_clip.duration
 
-# --- 4. HIZLI DEĞİŞEN LOW-FPS AI GÖRSELLERİ ÜRET ---
-frame_duration = 0.4
+# --- 4. KESİNTİSİZ AKICI AI FRAMELERİ İNDİR (SİYAH KARE ENGELLEYİCİ) ---
+frame_duration = 0.25  # Her kare 0.25 saniye (Saniyede 4 AI görseli ile ultra akıcı animasyon)
 num_frames = int(total_duration / frame_duration) + 1
 
-print(f"🤖 Generating {num_frames} AI frames for stop-motion animation...")
+print(f"🤖 Generating {num_frames} fluid AI frames...")
 
-prompts = [
-    f"hyperrealistic cinematic shot of {trend_topic}, action angle, highly detailed, 8k vertical wallpaper",
-    f"dramatic lighting scene of {trend_topic}, high quality cinematic frame, vivid colors",
-    f"close up view of {trend_topic}, photorealistic 8k vertical image, intense mood",
-    f"dynamic motion shot of {trend_topic}, professional photography, vertical 9:16",
-    f"cinematic masterpiece featuring {trend_topic}, trending on artstation, masterpiece"
+prompt_styles = [
+    "hyperrealistic 8k cinematic shot, vertical 9:16 portrait, vivid colors, intense action scene",
+    "dramatic lighting, 8k high detail photorealistic frame, vertical wallpaper style",
+    "close up focus, cinematic lighting, sharp details, vertical masterpiece",
+    "dynamic angle, action movie style, vibrant atmosphere, vertical 9:16 layout"
 ]
 
 image_clips = []
+last_valid_clip = None
 
 for i in range(num_frames):
     img_name = f"ai_frame_{i}.jpg"
-    current_prompt = random.choice(prompts) + f", seed {random.randint(1, 99999)}"
-    encoded_prompt = urllib.parse.quote(current_prompt)
-    ai_img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
+    success = False
     
-    try:
-        img_bytes = requests.get(ai_img_url, timeout=20).content
-        with open(img_name, 'wb') as f:
-            f.write(img_bytes)
+    # Görsel tam inene kadar en fazla 3 kere dene
+    for attempt in range(3):
+        seed = random.randint(10000, 999999)
+        style = random.choice(prompt_styles)
+        full_prompt = f"{trend_topic}, {style}, frame {i}"
+        encoded_prompt = urllib.parse.quote(full_prompt)
+        ai_img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}"
         
-        clip = ImageClip(img_name).with_duration(frame_duration)
-        clip = clip.resized(height=1920) if clip.h < 1920 else clip.resized(width=1080)
-        clip = clip.with_position('center')
-        image_clips.append(clip)
-        print(f"  └─ Frame {i+1}/{num_frames} ready.")
-    except Exception as e:
-        print(f"  └─ Frame {i+1} failed: {e}")
-        fallback = ColorClip(size=(1080, 1920), color=(15, 23, 42), duration=frame_duration)
-        image_clips.append(fallback)
+        try:
+            res = requests.get(ai_img_url, timeout=12)
+            if res.status_code == 200 and len(res.content) > 5000:  # Boş/Bozuk resim kontrolü
+                with open(img_name, 'wb') as f:
+                    f.write(res.content)
+                
+                # ImageClip ve Kırpma (Tam Sığdırma)
+                clip = ImageClip(img_name).with_duration(frame_duration)
+                
+                # Aspect ratio düzeltme ve ortalama
+                aspect_ratio = clip.w / clip.h
+                target_aspect = 1080 / 1920
+                
+                if aspect_ratio > target_aspect:
+                    clip = clip.resized(height=1920)
+                    x_center = clip.w / 2
+                    clip = clip.cropped(x1=x_center - 540, x2=x_center + 540, y1=0, y2=1920)
+                else:
+                    clip = clip.resized(width=1080)
+                    y_center = clip.h / 2
+                    clip = clip.cropped(x1=0, x2=1080, y1=y_center - 960, y2=y_center + 960)
 
-# Kareleri sıralı birleştir
+                clip = clip.with_position('center')
+                image_clips.append(clip)
+                last_valid_clip = clip
+                success = True
+                print(f"  └─ Frame {i+1}/{num_frames} downloaded cleanly.")
+                break
+        except Exception as e:
+            time.sleep(1)
+            
+    # Eğer API yanıt vermezse ASLA siyah ekran koyma, bir önceki başarılı kareyi uzat
+    if not success:
+        print(f"  └─ Frame {i+1} download missed, reusing previous AI frame.")
+        if last_valid_clip is not None:
+            image_clips.append(last_valid_clip.with_duration(frame_duration))
+        else:
+            fallback = ColorClip(size=(1080, 1920), color=(20, 20, 30), duration=frame_duration)
+            image_clips.append(fallback)
+
+# Tüm kareleri sıralı birleştir
 animated_sequence = concatenate_videoclips(image_clips, method="compose").subclipped(0, total_duration)
 
-# Karartma filtresi
-dark_overlay = ColorClip(size=(1080, 1920), color=(0, 0, 0), duration=total_duration).with_opacity(0.3)
+# Karartma filtresi (Okunabilirlik için hafif)
+dark_overlay = ColorClip(size=(1080, 1920), color=(0, 0, 0), duration=total_duration).with_opacity(0.25)
 
 # Şık Altyazı
 txt_clip = TextClip(
