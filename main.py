@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from gtts import gTTS
 
 # MoviePy v2 importları
-from moviepy import ColorClip, TextClip, ImageClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
+from moviepy import ImageClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
 
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -39,57 +39,73 @@ try:
     trend_topic = filtered_articles[0]
 except Exception as e:
     print(f"Global trend fetch failed, using default: {e}")
-    trend_topic = "Global News Today"
+    trend_topic = "mysterious global event"
 
 print(f"🔥 Global Trend Topic: {trend_topic}")
 
-# --- 3. İNGİLİZCE SES DOSYASINI OLUŞTUR ---
-text_to_speech = f"Check this out! Today's top global trend is {trend_topic}. What do you think about this?"
-tts = gTTS(text=text_to_speech, lang='en')
+# --- 3. VIRAL MERAK UYANDIRICI VE SORGULAYICI SESLENDİRME ---
+voice_scripts = [
+    f"Everyone is talking about this today. But what is really happening behind the scenes? Watch carefully.",
+    f"This just became the most searched topic on earth. Is it real, or are we being distracted?",
+    f"Pay attention. Something big is unfolding right now around this topic. Did you notice it?"
+]
+selected_voice_text = random.choice(voice_scripts)
+
+tts = gTTS(text=selected_voice_text, lang='en')
 audio_path = "voice.mp3"
 tts.save(audio_path)
 
 voice_clip = AudioFileClip(audio_path)
 total_duration = voice_clip.duration
 
-# --- 4. KESİNTİSİZ AKICI AI FRAMELERİ İNDİR (SİYAH KARE ENGELLEYİCİ) ---
-frame_duration = 0.25  # Her kare 0.25 saniye (Saniyede 4 AI görseli ile ultra akıcı animasyon)
-num_frames = int(total_duration / frame_duration) + 1
+# --- 4. 10 KARELİ ÖZGÜN AI KARAKTERİ & FLIPACLIP ANİMASYONU ---
+NUM_IMAGES = 10
+frame_duration = total_duration / NUM_IMAGES
 
-print(f"🤖 Generating {num_frames} fluid AI frames...")
+print(f"🤖 Generating {NUM_IMAGES} original character animation frames...")
 
-prompt_styles = [
-    "hyperrealistic 8k cinematic shot, vertical 9:16 portrait, vivid colors, intense action scene",
-    "dramatic lighting, 8k high detail photorealistic frame, vertical wallpaper style",
-    "close up focus, cinematic lighting, sharp details, vertical masterpiece",
-    "dynamic angle, action movie style, vibrant atmosphere, vertical 9:16 layout"
-]
+# Trendi başkası yerine kendi gözünden sorgulayan özgün AI karakterimiz
+character_description = "an original futuristic anime cyberpunk investigator protagonist with glowing eyes and leather coat, cinematic stop-motion style, sharp lines"
 
 image_clips = []
 last_valid_clip = None
 
-for i in range(num_frames):
+# FlipaClip tarzı 10 farklı hareket ve açı karesi
+angles = [
+    "close up face reaction, shock expression",
+    "looking down at glowing hologram news",
+    "fast camera turn, dynamic action pose",
+    "extreme close up on eyes, dramatic shadows",
+    "walking towards camera in dark rainy alley",
+    "pointing finger at screen, questioning look",
+    "turning head quickly, side profile",
+    "low angle heroic shot, dramatic lighting",
+    "zooming into face, intense aura",
+    "looking up at sky, mysterious ending pose"
+]
+
+for i in range(NUM_IMAGES):
     img_name = f"ai_frame_{i}.jpg"
-    success = False
+    angle_prompt = angles[i % len(angles)]
     
-    # Görsel tam inene kadar en fazla 3 kere dene
+    # Özgün karakter ile trend atmosferini harmanlama
+    full_prompt = f"{character_description}, {angle_prompt}, thematic background about {trend_topic}, high contrast, 8k vertical 9:16 portrait"
+    encoded_prompt = urllib.parse.quote(full_prompt)
+    
+    success = False
     for attempt in range(3):
-        seed = random.randint(10000, 999999)
-        style = random.choice(prompt_styles)
-        full_prompt = f"{trend_topic}, {style}, frame {i}"
-        encoded_prompt = urllib.parse.quote(full_prompt)
+        seed = random.randint(1000, 99999)
         ai_img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}"
         
         try:
-            res = requests.get(ai_img_url, timeout=12)
-            if res.status_code == 200 and len(res.content) > 5000:  # Boş/Bozuk resim kontrolü
+            res = requests.get(ai_img_url, timeout=15)
+            if res.status_code == 200 and len(res.content) > 5000:
                 with open(img_name, 'wb') as f:
                     f.write(res.content)
                 
-                # ImageClip ve Kırpma (Tam Sığdırma)
                 clip = ImageClip(img_name).with_duration(frame_duration)
                 
-                # Aspect ratio düzeltme ve ortalama
+                # Yamulmayı önleyen Orantısal Kırpma (1080x1920 dikey)
                 aspect_ratio = clip.w / clip.h
                 target_aspect = 1080 / 1920
                 
@@ -106,42 +122,24 @@ for i in range(num_frames):
                 image_clips.append(clip)
                 last_valid_clip = clip
                 success = True
-                print(f"  └─ Frame {i+1}/{num_frames} downloaded cleanly.")
+                print(f"  └─ Frame {i+1}/{NUM_IMAGES} generated successfully.")
                 break
         except Exception as e:
             time.sleep(1)
             
-    # Eğer API yanıt vermezse ASLA siyah ekran koyma, bir önceki başarılı kareyi uzat
     if not success:
-        print(f"  └─ Frame {i+1} download missed, reusing previous AI frame.")
         if last_valid_clip is not None:
             image_clips.append(last_valid_clip.with_duration(frame_duration))
-        else:
-            fallback = ColorClip(size=(1080, 1920), color=(20, 20, 30), duration=frame_duration)
-            image_clips.append(fallback)
 
-# Tüm kareleri sıralı birleştir
+# 10 Kareyi sıralı birleştir
 animated_sequence = concatenate_videoclips(image_clips, method="compose").subclipped(0, total_duration)
 
-# Karartma filtresi (Okunabilirlik için hafif)
-dark_overlay = ColorClip(size=(1080, 1920), color=(0, 0, 0), duration=total_duration).with_opacity(0.25)
-
-# Şık Altyazı
-txt_clip = TextClip(
-    text=f"🔥 TRENDING NOW\n\n{trend_topic.upper()}",
-    font_size=60,
-    color='yellow',
-    size=(900, 600),
-    method='caption'
-)
-txt_clip = txt_clip.with_position('center').with_duration(total_duration)
-
-# Videoyu Birleştir
-final_video = CompositeVideoClip([animated_sequence, dark_overlay, txt_clip], size=(1080, 1920)).with_audio(voice_clip)
+# SIFIR YAZI / SIFIR OVERLAY - Sadece temiz tam ekran video ve ses
+final_video = CompositeVideoClip([animated_sequence], size=(1080, 1920)).with_audio(voice_clip)
 output_path = "short_video.mp4"
 final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac')
 
-# --- 5. YOUTUBE SHORTS OLARAK YÜKLE ---
+# --- 5. YOUTUBE SHORTS OLARAK YÜKLE (#trend #shorts #viral) ---
 print("🚀 Uploading to YouTube...")
 
 creds = Credentials.from_authorized_user_file('token.json')
@@ -149,9 +147,9 @@ youtube = build('youtube', 'v3', credentials=creds)
 
 request_body = {
     'snippet': {
-        'title': f"Global Trend: {trend_topic} #shorts #viral",
-        'description': f"Worldwide trending topic: {trend_topic} #shorts #viral #trending",
-        'tags': [trend_topic, 'shorts', 'viral', 'trend'],
+        'title': "#trend #shorts #viral",
+        'description': "#trend #shorts #viral #trending",
+        'tags': ['trend', 'shorts', 'viral'],
         'categoryId': '22'
     },
     'status': {
@@ -169,4 +167,4 @@ response = youtube.videos().insert(
     media_body=media
 ).execute()
 
-print(f"🎉 VIDEO SUCCESSFULLY UPLOADED! Video ID: {response.get('id')}")
+print(f"🎉 VIRAL SHORTS SUCCESSFULLY UPLOADED! Video ID: {response.get('id')}")
