@@ -39,12 +39,12 @@ try:
     trend_topic = filtered_articles[0]
 except Exception as e:
     print(f"Global trend fetch failed, using default: {e}")
-    trend_topic = "Global Trending Topic"
+    trend_topic = "Global News Today"
 
 print(f"🔥 Global Trend Topic: {trend_topic}")
 
 # --- 3. İNGİLİZCE SES DOSYASINI OLUŞTUR ---
-text_to_speech = f"Did you know about this? Today's top trending topic worldwide is {trend_topic}. Stay tuned for daily global news!"
+text_to_speech = f"Did you know about this? Today's top trending topic worldwide is {trend_topic}. Stay tuned for daily updates!"
 tts = gTTS(text=text_to_speech, lang='en')
 audio_path = "voice.mp3"
 tts.save(audio_path)
@@ -52,12 +52,11 @@ tts.save(audio_path)
 voice_clip = AudioFileClip(audio_path)
 total_duration = voice_clip.duration
 
-# --- 4. ARKA ARKAYA HIZLI HAREKET EDEN (LOW-FPS STOP-MOTION) AI GÖRSELLERİ ÜRET ---
-# Her görsel 0.4 saniye ekranda kalacak (Saniyede 2.5 kare low-FPS animasyon)
+# --- 4. HIZLI DEĞİŞEN LOW-FPS AI GÖRSELLERİ ÜRET ---
 frame_duration = 0.4
 num_frames = int(total_duration / frame_duration) + 1
 
-print(f"🤖 Generating {num_frames} copyright-free AI frames for low-FPS animation...")
+print(f"🤖 Generating {num_frames} AI frames for stop-motion animation...")
 
 prompts = [
     f"hyperrealistic cinematic shot of {trend_topic}, action angle, highly detailed, 8k vertical wallpaper",
@@ -80,7 +79,6 @@ for i in range(num_frames):
         with open(img_name, 'wb') as f:
             f.write(img_bytes)
         
-        # Her kareyi kısa süreli clip yapıp listeye ekle
         clip = ImageClip(img_name).with_duration(frame_duration)
         clip = clip.resized(height=1920) if clip.h < 1920 else clip.resized(width=1080)
         clip = clip.with_position('center')
@@ -91,18 +89,18 @@ for i in range(num_frames):
         fallback = ColorClip(size=(1080, 1920), color=(15, 23, 42), duration=frame_duration)
         image_clips.append(fallback)
 
-# Tüm kareleri sıralı olarak birleştir (Low-FPS Video Akışı)
-animated_sequence = concatenate_videoclips(image_clips, method="compose").subclip(0, total_duration)
+# Kareleri sıralı birleştir
+animated_sequence = concatenate_videoclips(image_clips, method="compose").subclipped(0, total_duration)
 
-# Karartma filtresi (Okunabilirlik için)
+# Karartma filtresi
 dark_overlay = ColorClip(size=(1080, 1920), color=(0, 0, 0), duration=total_duration).with_opacity(0.3)
 
-# Şık Altyazı
+# Şık Altyazı (Boyutlandırma Onarıldı)
 txt_clip = TextClip(
     text=f"🔥 TRENDING NOW\n\n{trend_topic.upper()}",
-    font_size=65,
+    font_size=60,
     color='yellow',
-    size=(950, None),
+    size=(900, 600),
     method='caption'
 )
 txt_clip = txt_clip.with_position('center').with_duration(total_duration)
