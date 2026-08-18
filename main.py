@@ -5,10 +5,9 @@ import requests
 import random
 from datetime import datetime, timedelta
 from gtts import gTTS
-from moviepy.video.VideoClip import ColorClip, TextClip, ImageClip
-from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-from moviepy.video.compositing.concatenate import concatenate_videoclips
-from moviepy.audio.io.AudioFileClip import AudioFileClip
+
+# MoviePy v2 için doğru import yapısı
+from moviepy import ColorClip, TextClip, ImageClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
 
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -95,7 +94,7 @@ animated_sequence = concatenate_videoclips(image_clips, method="compose").subcli
 # Karartma filtresi
 dark_overlay = ColorClip(size=(1080, 1920), color=(0, 0, 0), duration=total_duration).with_opacity(0.3)
 
-# Şık Altyazı (Boyutlandırma Onarıldı)
+# Şık Altyazı
 txt_clip = TextClip(
     text=f"🔥 TRENDING NOW\n\n{trend_topic.upper()}",
     font_size=60,
