@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 from gtts import gTTS
 
-from moviepy import VideoFileClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
+from moviepy import ImageClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 
@@ -33,6 +33,7 @@ try:
     filtered_articles = [a['article'].replace('_', ' ') for a in articles if a['article'] not in ignore_list]
     trend_topic = filtered_articles[0]
 except Exception as e:
+    print(f"Global trend fetch failed: {e}")
     trend_topic = "mysterious global trend"
 
 print(f"🔥 Trend Topic: {trend_topic}")
@@ -50,40 +51,49 @@ tts.save(audio_path)
 voice_clip = AudioFileClip(audio_path)
 total_duration = voice_clip.duration
 
-# --- 4. ÜCRETSİZ AI VIDEO GENERATOR İLE SAHNELERİ ÜRETME ---
-NUM_SCENES = 3
-scene_duration = total_duration / NUM_SCENES
+# --- 4. GÜVENİLİR VE HIZLI ANİMASYON SİSTEMİ (10 KARE FLIPACLIP STYLE) ---
+NUM_FRAMES = 10
+frame_duration = total_duration / NUM_FRAMES
 
-video_clips = []
+print(f"🎬 Generating {NUM_FRAMES} animation frames...")
 
-base_prompt = "futuristic anime character investigating digital mysteries, cinematic lighting, 9:16 vertical video, 4k"
+base_prompt = "futuristic anime character investigating digital mysteries, cinematic lighting, 9:16 vertical portrait, 4k"
 prompts = [
-    f"{base_prompt}, looking deeply into holographic screen showing {trend_topic}",
-    f"{base_prompt}, running dramatically through cyber city street at night",
-    f"{base_prompt}, turning back to camera with intense glowing eyes"
+    f"{base_prompt}, standing in dark rain city looking at hologram screen",
+    f"{base_prompt}, turning head quickly with shocked face expression",
+    f"{base_prompt}, touching glowing holographic data about {trend_topic}",
+    f"{base_prompt}, close up on glowing blue eyes reflecting code",
+    f"{base_prompt}, running dramatically through cyber street",
+    f"{base_prompt}, jumping over building roof, low angle camera",
+    f"{base_prompt}, pointing finger towards camera, serious look",
+    f"{base_prompt}, pulling down cyber goggles, glowing aura",
+    f"{base_prompt}, looking up at sky light projection",
+    f"{base_prompt}, turning back to camera, mysterious shadow pose"
 ]
 
-print(f"🎬 Generating {NUM_SCENES} video scenes via free AI Video Generator...")
+image_clips = []
+last_successful_clip = None
 
-for i, p in enumerate(prompts):
-    video_filename = f"ai_video_{i}.mp4"
+for i in range(NUM_FRAMES):
+    img_filename = f"ai_frame_{i}.jpg"
+    p = prompts[i]
     encoded_p = urllib.parse.quote(p)
-    seed = random.randint(10000, 99999)
-    
-    # Bedava AI Video API URL (Pollinations Video Engine)
-    video_url = f"https://image.pollinations.ai/prompt/{encoded_p}?model=flux-video&width=1080&height=1920&nologo=true&seed={seed}"
     
     success = False
     for attempt in range(3):
+        seed = random.randint(10000, 99999)
+        # En stabil ve hızlı Turbo model kullanılıyor
+        img_url = f"https://image.pollinations.ai/prompt/{encoded_p}?model=turbo&width=1080&height=1920&nologo=true&seed={seed}"
+        
         try:
-            res = requests.get(video_url, timeout=45)
-            if res.status_code == 200 and len(res.content) > 50000:
-                with open(video_filename, 'wb') as f:
+            res = requests.get(img_url, timeout=20)
+            if res.status_code == 200 and len(res.content) > 10000:
+                with open(img_filename, 'wb') as f:
                     f.write(res.content)
                 
-                clip = VideoFileClip(video_filename).with_duration(scene_duration)
+                clip = ImageClip(img_filename).with_duration(frame_duration)
                 
-                # 1080x1920 Kırpma ve Boyutlandırma
+                # 1080x1920 Dikey Formata Tam Sığdırma Kırpması
                 aspect_ratio = clip.w / clip.h
                 target_aspect = 1080 / 1920
                 if aspect_ratio > target_aspect:
@@ -93,15 +103,29 @@ for i, p in enumerate(prompts):
                     clip = clip.resized(width=1080)
                     clip = clip.cropped(x1=0, x2=1080, y1=clip.h/2 - 960, y2=clip.h/2 + 960)
 
-                video_clips.append(clip)
+                clip = clip.with_position('center')
+                image_clips.append(clip)
+                last_successful_clip = clip
                 success = True
-                print(f"  └─ Video Scene {i+1} successfully generated.")
+                print(f"  └─ Frame {i+1}/{NUM_FRAMES} successfully created.")
                 break
         except Exception as e:
-            time.sleep(2)
+            time.sleep(1)
+            
+    # Eğer ağ hatası vb. olursa listenin boş kalıp çökmesini önleyen güvenlik ağı:
+    if not success:
+        if last_successful_clip is not None:
+            image_clips.append(last_successful_clip.with_duration(frame_duration))
+            print(f"  └─ Frame {i+1}/{NUM_FRAMES} used fallback previous frame.")
+
+# Güvenlik Kontrolü: Liste yine de boşsa çökmemesi için düz renk karesi oluştur
+if not image_clips:
+    print("⚠️ Fallback to safety color frame...")
+    from moviepy import ColorClip
+    image_clips.append(ColorClip(size=(1080, 1920), color=(15, 15, 30)).with_duration(total_duration))
 
 # --- 5. BİRLEŞTİRME VE YÜKLEME ---
-final_video = concatenate_videoclips(video_clips, method="compose").with_audio(voice_clip)
+final_video = concatenate_videoclips(image_clips, method="compose").with_audio(voice_clip)
 output_path = "short_video.mp4"
 final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac')
 
