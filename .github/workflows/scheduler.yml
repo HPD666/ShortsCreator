@@ -18,12 +18,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Fix Network & Install System Dependencies
+      - name: Fast System Dependencies Setup
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          # IPv6 takılmalarını engellemek için IPv4 zorunlu kılındı
+          sudo rm -rf /var/lib/apt/lists/*
           echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
-          echo 'Acquire::http::Timeout "10";' | sudo tee /etc/apt/apt.conf.d/99timeout
-          sudo apt-get update -y -q
+          echo 'Acquire::http::Timeout "5";' | sudo tee /etc/apt/apt.conf.d/99timeout
+          echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+          sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends ffmpeg imagemagick
 
       - name: Install Python Dependencies
