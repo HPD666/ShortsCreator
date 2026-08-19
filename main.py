@@ -55,8 +55,8 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. MODAL GPU CLASS WITH EXPLICIT STEP LOGGING & MEMORY FIXES
-@app.cls(gpu="a10g", timeout=900, retries=0)
+# 2. OPTIMIZED MODAL GPU CLASS
+@app.cls(gpu="a10g", timeout=600, retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
@@ -64,19 +64,19 @@ class VideoGenerator:
         from diffusers import LTXPipeline
 
         print("⚡ [GPU Container] Starting LTX-Video model load...", flush=True)
-        
-        # Load weights directly to CPU RAM first (do NOT use .to("cuda"))
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
             torch_dtype=torch.bfloat16
         )
         
-        # CPU offloading manages GPU VRAM per layer automatically
+        # Memory & Speed Optimizations
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
+        if hasattr(self.pipe, "vae") and hasattr(self.pipe.vae, "enable_tiling"):
+            self.pipe.vae.enable_tiling()
             
-        print("✅ [GPU Container] Model successfully loaded with CPU offloading!", flush=True)
+        print("✅ [GPU Container] Model successfully loaded and optimized!", flush=True)
 
     @modal.method()
     def render(self, prompt: str) -> bytes:
@@ -85,17 +85,18 @@ class VideoGenerator:
         import tempfile
         from diffusers.utils import export_to_video
 
-        # Clean VRAM before running
         gc.collect()
         torch.cuda.empty_cache()
 
         print(f"🎬 [GPU Container] Rendering video prompt: '{prompt[:50]}...'", flush=True)
+        
+        # Ultra-fast params: 12 steps, 17 frames, 384x384 resolution
         video_frames = self.pipe(
             prompt=prompt,
-            num_inference_steps=25,
-            height=512,
-            width=512,
-            num_frames=25,
+            num_inference_steps=12,
+            height=384,
+            width=384,
+            num_frames=17,
         ).frames[0]
 
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -103,7 +104,6 @@ class VideoGenerator:
             with open(tmp.name, "rb") as f:
                 data = f.read()
 
-        # Clean VRAM immediately so subsequent videos do not crash
         gc.collect()
         torch.cuda.empty_cache()
 
