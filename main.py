@@ -4,16 +4,17 @@ import logging
 import tempfile
 import warnings
 from pathlib import Path
+import modal
+from gtts import gTTS
 
 # HTTP ve SDK uyarı/log kirliliğini bastırma
 warnings.filterwarnings("ignore")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
-from huggingface_hub import InferenceClient
 from moviepy import (
     VideoFileClip,
+    AudioFileClip,
     TextClip,
     CompositeVideoClip,
     concatenate_videoclips
@@ -31,6 +32,49 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ai-t2v-creator")
 
+# 1. MODAL GPU ORTAMI KURULUMU
+modal_image = (
+    modal.Image.debian_slim()
+    .pip_install(
+        "diffusers",
+        "transformers",
+        "accelerate",
+        "torch",
+        "sentencepiece",
+        "imageio-ffmpeg"
+    )
+)
+app = modal.App("ai-t2v-creator", image=modal_image)
+
+
+# 2. MODAL GPU BULUTUNDA ÇALIŞACAK UZAK VİDEO RENDER FONKSİYONU
+@app.function(gpu="a10g", timeout=600)
+def render_modal_video(prompt: str) -> bytes:
+    import torch
+    from diffusers import LTXPipeline
+    from diffusers.utils import export_to_video
+    import tempfile
+
+    # Modal A10G GPU üzerinde LTX-Video modelini yükler
+    pipe = LTXPipeline.from_pretrained(
+        "Lightricks/LTX-Video",
+        torch_dtype=torch.bfloat16
+    ).to("cuda")
+
+    video_frames = pipe(
+        prompt=prompt,
+        num_inference_steps=30,
+        height=512,
+        width=512,
+        num_frames=25,
+    ).frames[0]
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        export_to_video(video_frames, tmp.name, fps=8)
+        with open(tmp.name, "rb") as f:
+            return f.read()
+
+
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
         with open('token.json', 'w') as f:
@@ -40,11 +84,11 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
 
 YT_API_KEY = os.environ.get("YT_API_KEY", None)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-t2v-"))
+
 
 def analyze_live_trends_for_t2v():
     if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
@@ -77,10 +121,7 @@ def analyze_live_trends_for_t2v():
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
- 
-    response = client.models.generate_content(model='gemini-3.6-flash', contents=gemini_prompt)
-
-
+    response = client.models.generate_content(model='gemini-1.5-flash', contents=gemini_prompt)
 
     if not response or not response.text:
         logger.error("❌ Gemini trend analizinde hata oluştu.")
@@ -99,50 +140,27 @@ def analyze_live_trends_for_t2v():
 
     return parsed_data[:3], "#trend #viral #shorts"
 
+
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
-    logger.info(f"🤖 Generating AI Video {idx+1} with HF InferenceClient: '{prompt[:40]}...'")
+    logger.info(f"🤖 Generating AI Video {idx+1} on Modal GPU: '{prompt[:40]}...'")
     output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
 
-    if not HF_TOKEN:
-        logger.error("❌ HF_TOKEN ortam değişkeni bulunamadı!")
-        return None
-
-    client = InferenceClient(token=HF_TOKEN, timeout=120)
-
-    models_to_try = [
-        "damo-vilab/text-to-video-ms-1.7b",  # Hızlı ve stabil hafif model
-        "Lightricks/LTX-Video",               # Orta ölçekli model
-        "tencent/HunyuanVideo"                # Yüksek kaliteli ağır model
-    ]
-
-    for model_name in models_to_try:
-        try:
-            logger.info(f"🔄 Requesting model: {model_name}...")
-            video_bytes = client.text_to_video(prompt, model=model_name)
-            
-            with open(output_path, "wb") as f:
-                f.write(video_bytes)
-
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"✅ AI Video Clip {idx+1} generated from {model_name}!")
-                return str(output_path)
-        except Exception as e:
-            logger.warning(f"Model {model_name} failed: {e}")
-
     try:
-        from gradio_client import Client as GradioClient
-        logger.info("🔄 Trying GradioClient with Authorization header fallback...")
-        g_client = GradioClient("Lightricks/LTX-Video-Demo", headers={"Authorization": f"Bearer {HF_TOKEN}"})
-        result = g_client.predict(prompt, api_name="/generate_video")
-        video_file = result[0] if isinstance(result, (list, tuple)) else result
-        if video_file and os.path.exists(video_file):
-            os.replace(video_file, output_path)
+        # Modal sunucusunda video oluşturulur
+        with app.run():
+            video_bytes = render_modal_video.remote(prompt)
+            
+        with open(output_path, "wb") as f:
+            f.write(video_bytes)
+
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            logger.info(f"✅ AI Video Clip {idx+1} successfully rendered on Modal GPU!")
             return str(output_path)
     except Exception as e:
-        logger.warning(f"Gradio fallback failed: {e}")
+        logger.error(f"❌ Modal T2V generation failed for clip {idx+1}: {e}")
 
-    logger.error(f"❌ All T2V attempts failed for clip {idx+1}.")
     return None
+
 
 def main():
     scenes, video_title = analyze_live_trends_for_t2v()
@@ -162,6 +180,7 @@ def main():
                     width=1080
                 )
 
+                # 📝 YAZI KAPLAMASI (TEXT OVERLAY)
                 txt_clip = TextClip(
                     text=scene["text"],
                     font_size=55,
@@ -172,16 +191,28 @@ def main():
                     size=(900, 300)
                 ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-                video_clips.append(CompositeVideoClip([vertical_clip, txt_clip]))
+                # 🔊 SES SESLENDİRMESİ (TTS AUDIO)
+                tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
+                tts = gTTS(text=scene["text"], lang='en')
+                tts.save(str(tts_path))
+
+                audio_clip = AudioFileClip(str(tts_path))
+                if audio_clip.duration > vertical_clip.duration:
+                    audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
+
+                # Video + Yazı + Yapay Zeka Sesini Birleştirme
+                composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
+                video_clips.append(composite)
+
             except Exception as e:
-                logger.warning(f"Klip işleme hatası ({idx+1}): {e}")
+                logger.warning(f"Klip ve ses işleme hatası ({idx+1}): {e}")
 
     if not video_clips:
         logger.error("❌ Hiçbir AI video klibi oluşturulamadı. İşlem durduruluyor.")
         sys.exit(1)
 
     try:
-        logger.info("🎬 Final video kurgulanıyor...")
+        logger.info("🎬 Final video ve sesler kurgulanıyor...")
         final_video = concatenate_videoclips(video_clips, method="compose")
         output_file = OUT_DIR / "short_video.mp4"
         
@@ -192,7 +223,7 @@ def main():
             audio_codec="aac", 
             logger=None
         )
-        logger.info(f"✅ Final AI video kaydedildi: {output_file}")
+        logger.info(f"✅ Sesli Final AI video kaydedildi: {output_file}")
 
         if os.path.exists('token.json'):
             logger.info("🚀 YouTube Shorts'a yükleniyor...")
@@ -227,6 +258,7 @@ def main():
     except Exception as e:
         logger.error(f"Render/Yükleme hatası: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
