@@ -1,84 +1,141 @@
 import os
-import time
+import sys
+import logging
+import tempfile
 import requests
+import subprocess
+from pathlib import Path
+
+from gradio_client import Client
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
-from google import genai
+from googleapiclient.http import MediaFileUpload
 
-# API ANAHTARLARI
-YT_API_KEY = "YOUR_YOUTUBE_API_KEY"
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("pure-t2v-bot")
 
-def get_viral_trend():
-    """1. Adım: Trend Akımı ve Görsel Konsepti Bulur"""
-    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
-    search_res = youtube.search().list(
-        q='shorts challenge meme', type='video', videoDuration='short', maxResults=5, part='snippet'
-    ).execute()
-
-    v_ids = [item['id']['videoId'] for item in search_res.get('items', [])]
-    video_res = youtube.videos().list(id=','.join(v_ids), part='snippet,statistics').execute()
-    
-    top_video = max(video_res.get('items', []), key=lambda x: int(x['statistics'].get('viewCount', 0)))
-    title = top_video['snippet']['title']
-    
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    prompt = f"YouTube Shorts akımı: '{title}'. Bu akıma uygun 5 saniyelik görsel bir AI video üretmek için İngilizce kısa prompt yaz (sadece prompt metnini ver)."
-    
-    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-    return title, response.text.strip()
-
-def generate_video_ai(prompt_text):
-    """2. Adım: API üzerinden MP4 Video Dosyası Üretir"""
-    print("🤖 Yapay zeka videosu oluşturuluyor...")
-    # Pollinations / Açık kaynak Video Generation API kullanımı
-    clean_prompt = requests.utils.quote(prompt_text)
-    video_url = f"https://image.pollinations.ai/prompt/{clean_prompt}?model=video&width=720&height=1280"
-    
-    res = requests.get(video_url)
-    video_filename = "generated_trend.mp4"
-    
-    with open(video_filename, "wb") as f:
-        f.write(res.content)
-    
-    return video_filename
-
-def upload_to_youtube(video_path, trend_title):
-    """3. Adım: Kanalına Otomatik Yükler"""
-    print("🚀 Video YouTube'a yükleniyor...")
-    creds = Credentials.from_authorized_user_file('token.json', ['https://www.googleapis.com/auth/youtube.upload'])
-    youtube = build('youtube', 'v3', credentials=creds)
-
-    request_body = {
-        'snippet': {
-            'title': f"{trend_title[:50]} #shorts",
-            'description': '#trend',
-            'tags': ['trend', 'shorts', 'viral'],
-            'categoryId': '22'
-        },
-        'status': {
-            'privacyStatus': 'public',
-            'selfDeclaredMadeForKids': False
-        }
-    }
-
-    media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-    response = youtube.videos().insert(
-        part='snippet,status',
-        body=request_body,
-        media_body=media
-    ).execute()
-
-    print(f"✅ Otomatik Yükleme Tamamlandı! Video ID: {response['id']}")
-
-def job():
+# Token Kontrolleri
+if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
-        title, video_prompt = get_viral_trend()
-        video_file = generate_video_ai(video_prompt)
-        upload_to_youtube(video_file, title)
+        with open('token.json', 'w') as f:
+            f.write(os.environ['TOKEN_JSON'])
     except Exception as e:
-        print(f"Hata oluştu: {e}")
+        logger.warning(f"token.json yazılamadı: {e}")
+
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
+
+OUT_DIR = Path("outputs")
+OUT_DIR.mkdir(exist_ok=True)
+TMP_DIR = Path(tempfile.mkdtemp(prefix="t2v-pipeline-"))
+
+CHARACTER_3D_STYLE = "3D Pixar style cute robot character, realistic 3D render, vertical 9:16"
+
+PROMPTS = [
+    f"{CHARACTER_3D_STYLE}, robot looking at smartphone shocked",
+    f"{CHARACTER_3D_STYLE}, robot dancing energetic viral dance",
+    f"{CHARACTER_3D_STYLE}, robot celebrating with colorful confetti"
+]
+
+def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
+    """Hugging Face yetkili tokenı ile Metinden-Videoya (T2V) üretimi yapar."""
+    logger.info(f"🎬 Klip {idx+1} için Metinden-Videoya (T2V) üretiliyor...")
+
+    spaces = [
+        "Wan-AI/Wan2.1-T2V-1.3B",
+        "artificialguybr/CogVideoX-5B-Text2Video",
+        "fffiloni/ZeroScope-T2V"
+    ]
+
+    for space_name in spaces:
+        try:
+            logger.info(f"🔄 HF Space bağlanıyor: {space_name}")
+            # hf_token parametresi 401 yetki hatasını engeller
+            client = Client(space_name, hf_token=HF_TOKEN, verbose=False)
+            
+            job = client.submit(prompt=prompt, api_name="/predict")
+            result = job.result(timeout=180)
+            
+            if result and os.path.exists(str(result)):
+                with open(result, "rb") as src, open(output_path, "wb") as dst:
+                    dst.write(src.read())
+                logger.info(f"✅ Klip {idx+1} başarıyla üretildi ({space_name})")
+                return True
+        except Exception as e:
+            logger.warning(f"⚠️ {space_name} geçildi: {e}")
+
+    return False
+
+def download_audio() -> str:
+    audio_path = TMP_DIR / "viral_audio.mp3"
+    pixabay_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
+    try:
+        res = requests.get(pixabay_url, timeout=30)
+        if res.status_code == 200:
+            with open(audio_path, "wb") as f:
+                f.write(res.content)
+            logger.info("🎵 Arka plan müziği indirildi.")
+    except Exception as e:
+        logger.warning(f"Müzik indirilemedi: {e}")
+    return str(audio_path)
+
+def main():
+    audio_path = download_audio()
+    video_clips = []
+
+    for idx, prompt in enumerate(PROMPTS):
+        clip_path = TMP_DIR / f"pure_clip_{idx}.mp4"
+        success = generate_t2v_video(prompt, idx, clip_path)
+        if success and clip_path.exists():
+            try:
+                clip = VideoFileClip(str(clip_path))
+                video_clips.append(clip)
+            except Exception as e:
+                logger.warning(f"Klip okunamadı: {e}")
+
+    if not video_clips:
+        logger.error("❌ Sunuculardan klip alınamadı. Lütfen HF_TOKEN eklendiğinden emin olun.")
+        sys.exit(0)
+
+    try:
+        final_video = concatenate_videoclips(video_clips, method="compose")
+        
+        if os.path.exists(audio_path):
+            try:
+                audio_clip = AudioFileClip(audio_path)
+                if audio_clip.duration > final_video.duration:
+                    audio_clip = audio_clip.subclipped(0, final_video.duration)
+                final_video = final_video.with_audio(audio_clip)
+                logger.info("🔊 Ses eklendi.")
+            except Exception as e:
+                logger.warning(f"Ses eklenemedi: {e}")
+
+        output_path = OUT_DIR / "short_video.mp4"
+        final_video.write_videofile(str(output_path), fps=24, codec="libx264", audio_codec="aac", logger=None)
+
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json')
+            youtube = build('youtube', 'v3', credentials=creds)
+
+            body = {
+                'snippet': {
+                    'title': '#shorts #3d #viral #trending',
+                    'description': '#shorts #3d #viral',
+                    'categoryId': '22'
+                },
+                'status': {
+                    'privacyStatus': 'public',
+                    'selfDeclaredMadeForKids': False,
+                    'containsSyntheticMedia': True
+                }
+            }
+            media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
+            youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
+            logger.info("🎉 Videolu ve Sesli Short YouTube'a yüklendi!")
+
+    except Exception as e:
+        logger.error(f"İşlem hatası: {e}")
+        sys.exit(0)
 
 if __name__ == "__main__":
-    job()
+    main()
