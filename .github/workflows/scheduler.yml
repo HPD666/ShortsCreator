@@ -1,34 +1,37 @@
-name: Free 3D Video Bot
+name: AI Shorts Creator
 
 on:
-  schedule:
-    - cron: '0 18 * * *' # Her gün TSİ 21:00'de otomatik çalışır
   workflow_dispatch:
+  schedule:
+    - cron: '0 6  * * *'
 
 jobs:
-  build-and-run:
+  run-creator:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Repoyu Çek
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Python Kurulumu
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: FFmpeg Hazır Kurulum
-        uses: FedericoCarboni/setup-ffmpeg@v3
+      - name: Install System Dependencies (FFmpeg & ImageMagick)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
 
-      - name: Bağımlılıkları Yükle
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install gradio_client moviepy google-api-python-client google-auth-oauthlib google-auth-httplib2 requests yt-dlp google-genai
+          pip install "moviepy>=2.0.0" huggingface_hub google-genai google-api-python-client google-auth-oauthlib gradio_client
 
-      - name: Botu Çalıştır
+      - name: Run Main Script
         env:
-          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
         run: python main.py
