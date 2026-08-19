@@ -7,7 +7,6 @@ import shutil
 from pathlib import Path
 
 from gradio_client import Client
-# MoviePy 2.0+ uyumlu içe aktarma
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -61,25 +60,37 @@ def get_live_trend_prompts():
             "Yanıtı aralarında '---' olacak şekilde ver."
         )
         
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=gemini_prompt)
-        generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
-        
-        if len(generated_prompts) >= 3:
-            clean_tag = titles[0][:15].replace(' ', '').replace('#', '')
-            return generated_prompts[:3], f"#shorts #trending #{clean_tag}"
+        # Güncel Gemini modelleri deneniyor
+        models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
+        response = None
+        for model_name in models_to_try:
+            try:
+                response = client.models.generate_content(model=model_name, contents=gemini_prompt)
+                if response and response.text:
+                    break
+            except Exception as model_err:
+                logger.warning(f"Gemini {model_name} denenirken hata: {model_err}")
+
+        if response and response.text:
+            generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
+            if len(generated_prompts) >= 3:
+                clean_tag = titles[0][:15].replace(' ', '').replace('#', '')
+                return generated_prompts[:3], f"#shorts #trending #{clean_tag}"
     except Exception as e:
         logger.warning(f"Trend çekme hatası: {e}")
         
     return default_prompts, "#shorts #3d #viral"
 
 def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
-    """Yalnızca doğrudan video (MP4) üreten T2V sunucularını tetikler."""
+    """Aktif T2V sunucularından doğrudan MP4 video üretir."""
     logger.info(f"🎬 Klip {idx+1} için T2V yapay zekası çalıştırılıyor...")
 
+    # Güncel ve aktif T2V Gradio alanları
     t2v_spaces = [
-        {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
-        {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"},
-        {"space": "fffiloni/ZeroScope-T2V", "api_name": "/predict"}
+        {"space": "guoyww/AnimateDiff", "api_name": "/generate"},
+        {"space": "multimodalart/VideoCrafter2", "api_name": "/predict"},
+        {"space": "video-crafter/VideoCrafter", "api_name": "/predict"},
+        {"space": "hysts/AnimateDiff", "api_name": "/generate"}
     ]
 
     for config in t2v_spaces:
@@ -97,12 +108,12 @@ def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
 
             if video_file and os.path.exists(video_file) and str(video_file).lower().endswith('.mp4'):
                 shutil.copy(video_file, str(output_path))
-                logger.info(f"✅ Klip {idx+1} doğrudan video olarak üretildi.")
+                logger.info(f"✅ Klip {idx+1} ({config['space']}) üzerinden başarıyla üretildi.")
                 return True
         except Exception as e:
             logger.warning(f"⚠️ Sunucu yanıt vermedi ({config['space']}): {e}")
 
-    logger.error(f"❌ Klip {idx+1} için hiçbir T2V sunucusu video üretemedi.")
+    logger.error(f"❌ Klip {idx+1} için geçerli T2V sunucusu bulunamadı.")
     return False
 
 def download_audio() -> str:
