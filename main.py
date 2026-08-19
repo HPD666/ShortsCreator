@@ -4,6 +4,7 @@ import logging
 import tempfile
 import requests
 import shutil
+import urllib.parse
 from pathlib import Path
 
 from gradio_client import Client
@@ -38,54 +39,55 @@ PROMPTS = [
 ]
 
 def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
-    """Hugging Face yetkili tokenı ile Metinden-Videoya (T2V) üretimi yapar."""
-    logger.info(f"🎬 Klip {idx+1} için Metinden-Videoya (T2V) üretiliyor...")
+    """Yedekli ve Garantili Metinden-Videoya (T2V) üretim fonksiyonu."""
+    logger.info(f"🎬 Klip {idx+1} üretiliyor: '{prompt[:30]}...'")
 
-    # Güncel ve çalışan T2V Space listesi (Gradio API isimleriyle birlikte)
+    # 1. YÖNTEM: Hugging Face Spaces
     spaces_config = [
         {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
         {"space": "artificialguybr/CogVideoX-5B-Text2Video", "api_name": "/predict"},
-        {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"}
     ]
 
     for config in spaces_config:
         space_name = config["space"]
         api_name = config["api_name"]
-
         try:
-            logger.info(f"🔄 HF Space bağlanıyor: {space_name}")
-            
-            # HuggingFace Token Doğru Bağlama
+            logger.info(f"🔄 HF Space deneniyor: {space_name}")
             client = Client(space_name, token=HF_TOKEN, verbose=False) if HF_TOKEN else Client(space_name, verbose=False)
             
-            # Tahmin/Üretim isteği
-            result = client.predict(
-                prompt,
-                api_name=api_name
-            )
+            result = client.predict(prompt, api_name=api_name)
             
-            # Gradio dönen sonucu analiz et (dosya yolu, tuple veya dict olabilir)
             video_file = None
             if isinstance(result, str) and os.path.exists(result):
                 video_file = result
             elif isinstance(result, (list, tuple)) and len(result) > 0:
-                for item in result:
-                    if isinstance(item, str) and os.path.exists(item):
-                        video_file = item
-                        break
-                    elif isinstance(item, dict) and "video" in item and os.path.exists(item["video"]):
-                        video_file = item["video"]
-                        break
+                item = result[0]
+                if isinstance(item, str) and os.path.exists(item):
+                    video_file = item
+                elif isinstance(item, dict) and "video" in item:
+                    video_file = item["video"]
 
-            if video_file:
+            if video_file and os.path.exists(video_file):
                 shutil.copy(video_file, str(output_path))
-                logger.info(f"✅ Klip {idx+1} başarıyla üretildi ({space_name})")
+                logger.info(f"✅ Klip {idx+1} HF sunucusundan başarıyla alındı.")
                 return True
-            else:
-                logger.warning(f"⚠️ {space_name} geçerli dosya dönmedi.")
-
         except Exception as e:
-            logger.warning(f"⚠️ {space_name} başarısız oldu: {e}")
+            logger.warning(f"⚠️ {space_name} yanıt vermedi veya hata döndürdü: {e}")
+
+    # 2. YÖNTEM (YEDEK): HF başarısız olursa Direkt Video API Fallback
+    try:
+        logger.info("⚡ HF sunucuları yoğun, yedek API (Pollinations) devreye giriyor...")
+        encoded_prompt = urllib.parse.quote(prompt)
+        video_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024"
+        
+        response = requests.get(video_url, timeout=60)
+        if response.status_code == 200 and len(response.content) > 10000:
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+            logger.info(f"✅ Klip {idx+1} yedek API ile üretildi.")
+            return True
+    except Exception as e:
+        logger.error(f"❌ Yedek API hatası: {e}")
 
     return False
 
@@ -117,7 +119,7 @@ def main():
                 logger.warning(f"Klip okunamadı: {e}")
 
     if not video_clips:
-        logger.error("❌ Sunuculardan klip alınamadı. Lütfen GitHub Secrets içinde HF_TOKEN eklendiğinden emin olun.")
+        logger.error("❌ Hiçbir sunucudan klip alınamadı.")
         sys.exit(0)
 
     try:
