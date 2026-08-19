@@ -1,28 +1,34 @@
-name: YouTube Otomatik Yukleme
+name: YouTube Otomatik Dans Akımı Yukleme
 
 on:
   schedule:
-    # Her gün Türkiye saatiyle 09:00'da otomatik çalışır (UTC 06:00)
-    - cron: '0 7 * * *'
+    # Her gün Türkiye saatiyle 09:00'da çalışır (UTC 06:00)
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Repo Checkout
+        uses: actions/checkout@v4
 
       - name: Python Kurulumu
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Kütüphaneleri Yükle
+      - name: Sistem Bağımlılıkları (FFmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1
+
+      - name: Python Kütüphaneleri
         run: |
           python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 gtts moviepy requests Pillow
+          pip install yt-dlp requests beautifulsoup4 moviepy pillow mediapipe numpy opencv-python librosa soundfile tenacity google-api-python-client google-auth-oauthlib google-auth-httplib2
 
-      - name: Botu Çalıştır
+      - name: Botu Çalıştır ve YouTube'a Yükle
         env:
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
           CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
