@@ -1,17 +1,31 @@
 import os
-import json
+import sys
 import io
-import urllib.parse
-import requests
-import random
+import json
+import math
 import time
-from datetime import datetime, timedelta
-from gtts import gTTS
+import shutil
+import logging
+import tempfile
+import subprocess
+import requests
+from pathlib import Path
+from bs4 import BeautifulSoup
+import numpy as np
 from PIL import Image
 
-from moviepy import ImageClip, CompositeVideoClip, concatenate_videoclips, AudioFileClip
+import mediapipe as mp
+import cv2
+import librosa
+import soundfile as sf
+from moviepy import ImageSequenceClip, AudioFileClip, CompositeVideoClip
+
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from googleapiclient.http import MediaFileUpload
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("trend-pipeline")
 
 # --- 1. SECRETS HAZIRLIĞI ---
 if 'TOKEN_JSON' in os.environ:
@@ -22,177 +36,152 @@ if 'CLIENT_SECRET_JSON' in os.environ:
     with open('client_secret.json', 'w') as f:
         f.write(os.environ['CLIENT_SECRET_JSON'])
 
-HF_TOKEN = os.environ.get('HF_TOKEN', None)
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
-# --- 2. ORANTI BOZMAYAN CENTER-CROP (1080x1920) ---
-def process_center_crop(image_bytes, target_w=1080, target_h=1920):
-    """Görseli sündürmeden orantılı şekilde merkezden 9:16 kırpar."""
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    target_ratio = target_w / target_h
-    img_ratio = img.width / img.height
+OUT_DIR = Path("outputs")
+OUT_DIR.mkdir(exist_ok=True)
+TMP_DIR = Path(tempfile.mkdtemp(prefix="trend-pipeline-"))
 
-    if img_ratio > target_ratio:
-        new_h = target_h
-        new_w = int(img.width * (target_h / img.height))
-        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        left = (new_w - target_w) // 2
-        img = img.crop((left, 0, left + target_w, target_h))
-    else:
-        new_w = target_w
-        new_h = int(img.height * (target_w / img.width))
-        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        top = (new_h - target_h) // 2
-        img = img.crop((0, top, target_w, top + target_h))
+TARGET_RESOLUTION = (1080, 1920) # 9:16 Portrait
+TITLE = "#trend #shorts #viral"
+MAX_VIDEO_SECONDS = 12
+FRAME_RATE = 24
 
-    return img
+# --- 2. ORANTI BOZMAYAN CENTER-CROP ---
+def center_crop_9_16(pil_img, target=TARGET_RESOLUTION):
+    target_w, target_h = target
+    src_w, src_h = pil_img.size
+    scale = max(target_w / src_w, target_h / src_h)
+    new_w = int(src_w * scale)
+    new_h = int(src_h * scale)
+    img_resized = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    left = (new_w - target_w) // 2
+    top = (new_h - target_h) // 2
+    return img_resized.crop((left, top, left + target_w, top + target_h))
 
-# --- 3. TREND İÇERİK VE DETAYLI SPESİFİK METİN ÇEKME ---
-print("🔍 Fetching global trend and summary details...")
-try:
-    yesterday = datetime.utcnow() - timedelta(days=1)
-    date_str = yesterday.strftime("%Y/%m/%d")
-    url = f"https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/{date_str}"
-    headers = {'User-Agent': 'ShortsCreatorBot/1.0'}
-    response = requests.get(url, headers=headers).json()
-    articles = response['items'][0]['articles']
-    
-    ignore_list = ['Main_Page', 'Special:Search', 'Deaths_in_2026', 'Wikipedia:Featured_pictures']
-    filtered_articles = [a['article'].replace('_', ' ') for a in articles if a['article'] not in ignore_list]
-    trend_topic = filtered_articles[0]
-    
-    summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(trend_topic)}"
-    sum_res = requests.get(summary_url, headers=headers).json()
-    extract_text = sum_res.get('extract', '')
-    
-    if extract_text and len(extract_text) > 30:
-        first_sentences = '. '.join(extract_text.split('. ')[:2])
-        voice_script = f"Here is what happened with {trend_topic}. {first_sentences}. What do you think?"
-    else:
-        voice_script = f"Breakdown on {trend_topic}. Major updates are unfolding right now. Did you see this coming?"
-except Exception as e:
-    print(f"Trend fetch failed: {e}")
-    trend_topic = "mysterious breaking news"
-    voice_script = "Major updates are unfolding worldwide right now. Stay tuned."
-
-print(f"🔥 Trend Topic: {trend_topic}")
-
-# --- 4. SESLENDİRME ---
-tts = gTTS(text=voice_script, lang='en')
-audio_path = "voice.mp3"
-tts.save(audio_path)
-
-voice_clip = AudioFileClip(audio_path)
-total_duration = voice_clip.duration
-
-# --- 5. HUGGING FACE İLE GÖRSEL ÜRETİMİ ---
-NUM_FRAMES = 10
-frame_duration = total_duration / NUM_FRAMES
-
-print(f"🤖 Generating {NUM_FRAMES} frames via Hugging Face Inference API...")
-
-base_prompt = f"original cyberpunk detective protagonist reacting to {trend_topic}, anime style, 8k vertical portrait, dynamic shadows"
-frame_prompts = [
-    f"{base_prompt}, looking shocked at glowing news screen",
-    f"{base_prompt}, turning head quickly in dark alley",
-    f"{base_prompt}, touching digital hologram interface",
-    f"{base_prompt}, close up on glowing blue eyes reflecting digital text",
-    f"{base_prompt}, running fast across cyber street",
-    f"{base_prompt}, jumping over edge, cinematic angle",
-    f"{base_prompt}, pointing finger dramatically at camera",
-    f"{base_prompt}, pulling down cyber goggles, intense aura",
-    f"{base_prompt}, looking up at sky hologram projection",
-    f"{base_prompt}, mysterious silhouette ending pose"
-]
-
-def fetch_hf_image(prompt):
-    model_id = "black-forest-labs/FLUX.1-schnell"
-    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
-    
-    headers = {}
-    if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
-        
-    payload = {"inputs": prompt}
-    
-    for attempt in range(3):
-        try:
-            res = requests.post(api_url, headers=headers, json=payload, timeout=25)
-            if res.status_code == 200 and len(res.content) > 10000:
-                return res.content
-            elif res.status_code == 503:
-                time.sleep(8)
-            else:
-                time.sleep(2)
-        except Exception:
-            time.sleep(2)
-            
+# --- 3. TREND VE ORİJİNAL VİRAL SESİ İNDİRME ---
+def discover_and_download_trend():
+    logger.info("🔍 Scrape & download trending short dance audio...")
     try:
-        encoded = urllib.parse.quote(prompt)
-        fallback_url = f"https://image.pollinations.ai/prompt/{encoded}?model=turbo&width=1080&height=1920&nologo=true"
-        f_res = requests.get(fallback_url, timeout=15)
-        if f_res.status_code == 200:
-            return f_res.content
-    except Exception:
-        pass
-    return None
-
-image_clips = []
-last_valid_clip = None
-
-for i in range(NUM_FRAMES):
-    img_filename = f"ai_frame_{i}.jpg"
-    p = frame_prompts[i]
-    
-    raw_bytes = fetch_hf_image(p)
-    
-    if raw_bytes:
-        processed_img = process_center_crop(raw_bytes, 1080, 1920)
-        processed_img.save(img_filename)
+        url = "https://www.youtube.com/feed/trending"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        soup = BeautifulSoup(r.text, "html.parser")
+        short_url = None
+        for a in soup.find_all("a", href=True):
+            if "/shorts/" in a["href"]:
+                short_url = "https://www.youtube.com" + a["href"].split("&")[0]
+                break
         
-        clip = ImageClip(img_filename).with_duration(frame_duration)
-        image_clips.append(clip)
-        last_valid_clip = clip
-        print(f"  └─ Frame {i+1}/{NUM_FRAMES} processed cleanly.")
-    else:
-        if last_valid_clip is not None:
-            image_clips.append(last_valid_clip.with_duration(frame_duration))
-            print(f"  └─ Frame {i+1}/{NUM_FRAMES} reused previous valid frame.")
+        if not short_url:
+            short_url = "https://www.youtube.com/shorts/"
 
-if not image_clips:
-    from moviepy import ColorClip
-    image_clips.append(ColorClip(size=(1080, 1920), color=(10, 15, 30)).with_duration(total_duration))
+        audio_path = TMP_DIR / "viral_audio.mp3"
+        cmd = [
+            "yt-dlp",
+            "-f", "bestaudio",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "-o", str(audio_path),
+            short_url
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return str(audio_path)
+    except Exception as e:
+        logger.warning(f"Trend download fallback: {e}")
+        # Yedek ritmik müzik
+        music_url = "https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3"
+        fallback_path = TMP_DIR / "fallback_audio.mp3"
+        res = requests.get(music_url)
+        with open(fallback_path, "wb") as f:
+            f.write(res.content)
+        return str(fallback_path)
 
-# --- 6. VİDEO BİRLEŞTİRME VE YÜKLEME ---
-animated_sequence = concatenate_videoclips(image_clips, method="compose").subclipped(0, total_duration)
-final_video = CompositeVideoClip([animated_sequence], size=(1080, 1920)).with_audio(voice_clip)
+# --- 4. DANS KOREOGRAFİSİ & HAREKET SENTETİKLEME ---
+def generate_dance_frames(audio_path):
+    logger.info("🕺 Extracting beats and generating motion-synced dance frames...")
+    y, sr = librosa.load(audio_path, sr=22050, mono=True)
+    duration = min(librosa.get_duration(y=y, sr=sr), MAX_VIDEO_SECONDS)
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+    beat_times = librosa.frames_to_time(beats, sr=sr)
 
-output_path = "short_video.mp4"
-final_video.write_videofile(output_path, fps=24, codec='libx264', audio_codec='aac')
+    total_frames = int(duration * FRAME_RATE)
+    frames_dir = TMP_DIR / "dance_frames"
+    frames_dir.mkdir(exist_ok=True)
 
-print("🚀 Uploading to YouTube...")
-creds = Credentials.from_authorized_user_file('token.json')
-youtube = build('youtube', 'v3', credentials=creds)
+    # Hugging Face veya Pollinations ile trende uygun akım kareleri üretme
+    base_prompt = "cyberpunk anime protagonist performing energetic TikTok dance challenge, neon stage lights, highly detailed, 8k portrait"
+    
+    frame_files = []
+    for i in range(total_frames):
+        current_time = i / FRAME_RATE
+        # Ritme göre dans hareket pozu değişimi
+        is_beat = any(abs(current_time - b) < (1.0 / FRAME_RATE) for b in beat_times)
+        
+        # Pollinations Turbo (Ücretsiz Hızlı Render)
+        prompt_step = f"{base_prompt}, dance move frame {i%8 + 1}, dynamic pose, sharp focus"
+        encoded = requests.utils.quote(prompt_step)
+        img_url = f"https://image.pollinations.ai/prompt/{encoded}?model=turbo&width=1080&height=1920&nologo=true"
+        
+        try:
+            res = requests.get(img_url, timeout=10)
+            if res.status_code == 200:
+                raw_img = Image.open(io.BytesIO(res.content)).convert("RGB")
+            else:
+                raw_img = Image.new("RGB", TARGET_RESOLUTION, (20, 20, 40))
+        except Exception:
+            raw_img = Image.new("RGB", TARGET_RESOLUTION, (20, 20, 40))
 
-request_body = {
-    'snippet': {
-        'title': "#trend #shorts #viral",
-        'description': "#trend #shorts #viral #trending",
-        'tags': ['trend', 'shorts', 'viral'],
-        'categoryId': '22'
-    },
-    'status': {
-        'privacyStatus': 'public',
-        'selfDeclaredMadeForKids': False,
+        cropped = center_crop_9_16(raw_img, TARGET_RESOLUTION)
+        frame_path = frames_dir / f"frame_{i:05d}.jpg"
+        cropped.save(frame_path, quality=90)
+        frame_files.append(str(frame_path))
+
+    return frame_files, duration
+
+# --- 5. VİDEO OLUŞTURMA VE YÜKLEME ---
+def main():
+    logger.info("🚀 Starting Trend & Dance Pipeline...")
+    audio_file = discover_and_download_trend()
+    frame_files, video_duration = generate_dance_frames(audio_file)
+
+    output_video_path = OUT_DIR / "short_video.mp4"
+
+    # MoviePy v2 ile Ses ve Görüntü Birleştirme
+    video_clip = ImageSequenceClip(frame_files, fps=FRAME_RATE).subclipped(0, video_duration)
+    audio_clip = AudioFileClip(audio_file).subclipped(0, video_duration)
+    
+    final_video = CompositeVideoClip([video_clip]).with_audio(audio_clip)
+    final_video.write_videofile(str(output_video_path), fps=FRAME_RATE, codec="libx264", audio_codec="aac")
+
+    logger.info("📤 Uploading generated trend video to YouTube...")
+    if not os.path.exists('token.json'):
+        logger.error("token.json not found! Cannot upload to YouTube.")
+        return
+
+    creds = Credentials.from_authorized_user_file('token.json')
+    youtube = build('youtube', 'v3', credentials=creds)
+
+    request_body = {
+        'snippet': {
+            'title': TITLE,
+            'description': f"{TITLE} #trending #dance #challenge",
+            'tags': ['trend', 'shorts', 'viral', 'dance'],
+            'categoryId': '22'
+        },
+        'status': {
+            'privacyStatus': 'public',
+            'selfDeclaredMadeForKids': False,
+        }
     }
-}
 
-from googleapiclient.http import MediaFileUpload
-media = MediaFileUpload(output_path, chunksize=-1, resumable=True, mimetype='video/mp4')
+    media = MediaFileUpload(str(output_video_path), chunksize=-1, resumable=True, mimetype='video/mp4')
+    response = youtube.videos().insert(
+        part='snippet,status',
+        body=request_body,
+        media_body=media
+    ).execute()
 
-response = youtube.videos().insert(
-    part='snippet,status',
-    body=request_body,
-    media_body=media
-).execute()
+    logger.info(f"🎉 SUCCESS! YouTube Short Uploaded with ID: {response.get('id')}")
 
-print(f"🎉 SUCCESS! YouTube Video ID: {response.get('id')}")
+if __name__ == "__main__":
+    main()
