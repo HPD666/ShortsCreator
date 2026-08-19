@@ -85,7 +85,7 @@ def analyze_live_trends_for_t2v():
         sys.exit(1)
 
     
-return parsed_data[:3], "#trend #viral #shorts #ai"
+return parsed_data[:3], "#trend #viral #shorts"
 
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
