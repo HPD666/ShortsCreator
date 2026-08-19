@@ -54,7 +54,6 @@ def gemini_prompt(title):
         logger.warning(f"⚠️ Gemini boş yanıt döndü: {data}")
         return f"A cinematic AI video prompt for trend: {title}"
 
-
 # --- 3. Video Generation (HF Spaces) ---
 def generate_video(prompt):
     spaces = ["artificialguybr/CogVideoX-5B-Text2Video","fffiloni/ZeroScope-T2V"]
