@@ -4,7 +4,7 @@ import logging
 import tempfile
 from pathlib import Path
 
-from gradio_client import Client as GradioClient
+from huggingface_hub import InferenceClient
 from moviepy import (
     VideoFileClip,
     TextClip,
@@ -87,32 +87,51 @@ def analyze_live_trends_for_t2v():
     return parsed_data[:3], f"Trending Now #{titles[0].split()[0].replace('#', '')} #shorts #ai"
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
-    logger.info(f"🤖 Generating AI Video {idx+1} with HF Token: '{prompt[:40]}...'")
+    logger.info(f"🤖 Generating AI Video {idx+1} with HF InferenceClient: '{prompt[:40]}...'")
     output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
 
-    active_spaces = [
-        ("Lightricks/LTX-Video-Demo", "/generate_video"),
-        ("KingNish/Realtime-Text-to-Video", "/predict"),
-        ("fffilimonov/zeroscope_v2_xl", "/generate")
+    if not HF_TOKEN:
+        logger.error("❌ HF_TOKEN ortam değişkeni bulunamadı!")
+        return None
+
+    # Hugging Face InferenceClient
+    client = InferenceClient(token=HF_TOKEN)
+
+    # Sunucu tarafında aktif çalışan modeller
+    models_to_try = [
+        "Lightricks/LTX-Video",
+        "tencent/HunyuanVideo",
+        "damo-vilab/text-to-video-ms-1.7b"
     ]
 
-    for space_name, api_endpoint in active_spaces:
+    for model_name in models_to_try:
         try:
-            logger.info(f"🔄 Authenticating & Requesting: {space_name}...")
-            # HF_TOKEN ile yetkili istemci başlatılıyor
-            client = GradioClient(space_name, hf_token=HF_TOKEN) if HF_TOKEN else GradioClient(space_name)
+            logger.info(f"🔄 Requesting model: {model_name}...")
+            video_bytes = client.text_to_video(prompt, model=model_name)
             
-            result = client.predict(prompt, api_name=api_endpoint)
-            video_file = result[0] if isinstance(result, (list, tuple)) else result
+            with open(output_path, "wb") as f:
+                f.write(video_bytes)
 
-            if video_file and os.path.exists(video_file):
-                os.replace(video_file, output_path)
-                logger.info(f"✅ AI Video Clip {idx+1} successfully rendered from {space_name}!")
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                logger.info(f"✅ AI Video Clip {idx+1} generated from {model_name}!")
                 return str(output_path)
         except Exception as e:
-            logger.warning(f"Space {space_name} failed: {e}")
+            logger.warning(f"Model {model_name} failed: {e}")
 
-    logger.error(f"❌ All AI T2V spaces failed for clip {idx+1}.")
+    # GradioClient alternatif bağlantı testi (Headers auth ile)
+    try:
+        from gradio_client import Client as GradioClient
+        logger.info("🔄 Trying GradioClient with Authorization header fallback...")
+        g_client = GradioClient("Lightricks/LTX-Video-Demo", headers={"Authorization": f"Bearer {HF_TOKEN}"})
+        result = g_client.predict(prompt, api_name="/generate_video")
+        video_file = result[0] if isinstance(result, (list, tuple)) else result
+        if video_file and os.path.exists(video_file):
+            os.replace(video_file, output_path)
+            return str(output_path)
+    except Exception as e:
+        logger.warning(f"Gradio fallback failed: {e}")
+
+    logger.error(f"❌ All T2V attempts failed for clip {idx+1}.")
     return None
 
 def main():
