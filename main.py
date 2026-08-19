@@ -78,7 +78,8 @@ def analyze_live_trends_for_t2v():
     )
     
     # ✅ MODEL İSMİ GÜNCELLENDİ (gemini-2.5-flash)
-    response = client.models.generate_content(model='gemini-2.5-flash', contents=gemini_prompt)
+    response = client.models.generate_content(model='gemini-2.0-flash', contents=gemini_prompt)
+
 
     if not response or not response.text:
         logger.error("❌ Gemini trend analizinde hata oluştu.")
