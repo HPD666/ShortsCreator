@@ -1,4 +1,2 @@
-gradio_client
-google-genai
-google-api-python-client
-moviepy
+google-generativeai
+modal
