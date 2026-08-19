@@ -154,7 +154,6 @@ def main():
                 clip = VideoFileClip(ai_video_file)
 
                 # 🎬 VİDEOYU DIKEY (9:16 SHORTS) FORMATINA GEÇİRME
-                # Yüksekliği 1920px yapıp merkeze odaklayarak dikey kırpıyoruz (görüntü yamulmaz)
                 clip_resized = clip.resized(height=1920)
                 vertical_clip = clip_resized.cropped(
                     x_center=clip_resized.w / 2, 
@@ -211,8 +210,19 @@ def main():
                 }
             }
             media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
-            youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Video YouTube Shorts'a yüklendi!")
+            
+            # Video yükleme işlemi
+            upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
+            video_id = upload_response.get('id')
+            logger.info(f"🎉 Video YouTube Shorts'a yüklendi! Video ID: {video_id}")
+
+            # 🛑 OTOMATİK BEĞENİ EKLENTİSİ
+            if video_id:
+                try:
+                    youtube.videos().rate(id=video_id, rating='like').execute()
+                    logger.info("👍 Video otomatik olarak beğenildi!")
+                except Exception as like_error:
+                    logger.warning(f"⚠️ Video beğenilemedi (Yetki eksikliği veya kota uyarısı): {like_error}")
 
     except Exception as e:
         logger.error(f"Render/Yükleme hatası: {e}")
