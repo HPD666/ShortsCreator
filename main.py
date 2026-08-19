@@ -35,10 +35,9 @@ def pioneer_video(videos):
     videos.sort(key=lambda x: x["snippet"]["publishedAt"])
     return videos[0]
 
-# --- 2. Gemini Verification + Prompt ---
-def gemini_prompt(thumbnail_url,title):
+# --- 2. Gemini Prompt ---
+def gemini_prompt(title):
     headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
-    # Prompt üret
     payload = {
         "contents":[{"parts":[{"text":f"Generate a cinematic English AI video prompt for a viral YouTube Shorts trend titled: {title}"}]}]
     }
@@ -86,8 +85,7 @@ def main():
     vids=fetch_global_shorts()
     pioneer=pioneer_video(vids)
     title=pioneer["snippet"]["title"]
-    thumb=pioneer["snippet"]["thumbnails"]["high"]["url"]
-    prompt=gemini_prompt(thumb,title)
+    prompt=gemini_prompt(title)
     clip_path=generate_video(prompt)
     if not clip_path: sys.exit("Video üretilemedi")
     audio_path=download_audio()
