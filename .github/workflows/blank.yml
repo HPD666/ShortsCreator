@@ -2,7 +2,7 @@ name: Free 3D Video Bot
 
 on:
   schedule:
-    - cron: '0 18 * * *' # Her gün TSİ 21:00'de (Küresel Prime Time) otomatik çalışır
+    - cron: '0 18 * * *' # Her gün TSİ 21:00'de otomatik çalışır
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: FFmpeg Hazır Kurulum (1 Saniye)
+      - name: FFmpeg Hazır Kurulum
         uses: FedericoCarboni/setup-ffmpeg@v3
 
       - name: Bağımlılıkları Yükle
@@ -28,4 +28,5 @@ jobs:
       - name: Botu Çalıştır
         env:
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python main.py
