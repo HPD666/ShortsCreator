@@ -3,7 +3,6 @@ import sys
 import logging
 import tempfile
 import requests
-import shutil
 import urllib.parse
 from pathlib import Path
 
@@ -43,11 +42,9 @@ def get_live_trend_prompts():
     ]
     
     if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
-        logger.warning("Eksik API veya kütüphane. Varsayılan 3D konsept kullanılıyor.")
         return default_prompts, "#shorts #3d #viral #trending"
 
     try:
-        logger.info("🔥 YouTube Shorts trendleri çekiliyor...")
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
         res = youtube.search().list(q='shorts viral challenge', type='video', videoDuration='short', maxResults=5, part='snippet').execute()
         
@@ -61,17 +58,8 @@ def get_live_trend_prompts():
             "Yanıtı aralarında '---' olacak şekilde ver."
         )
         
-        # Güncel çalışan Gemini 2.0 modelleri
-        models_to_try = ['gemini-2.0-flash', 'gemini-2.0-flash-lite']
-        response = None
-        for model_name in models_to_try:
-            try:
-                response = client.models.generate_content(model=model_name, contents=gemini_prompt)
-                if response and response.text:
-                    logger.info(f"✅ Gemini trend promptları üretildi ({model_name}).")
-                    break
-            except Exception as model_err:
-                logger.warning(f"Gemini {model_name} denenirken hata: {model_err}")
+        # Güncel model sürümü
+        response = client.models.generate_content(model='gemini-2.0-flash', contents=gemini_prompt)
 
         if response and response.text:
             generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
@@ -84,25 +72,22 @@ def get_live_trend_prompts():
     return default_prompts, "#shorts #3d #viral"
 
 def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
-    """Gerçek T2V API üzerinden hızlı ve doğrudan MP4 video üretir."""
-    logger.info(f"🎬 Klip {idx+1} için T2V videosu üretiliyor: '{prompt[:30]}...'")
+    """Hugging Face yerine doğrudan HTTP istemi ile MP4 üreten alternatif T2V yapısı."""
+    logger.info(f"🎬 Klip {idx+1} üretiliyor...")
 
     try:
         encoded_prompt = urllib.parse.quote(prompt)
-        # Doğrudan T2V Video API bağlantısı
-        video_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024&seed={idx+42}"
+        # Doğrudan video oluşturan dış servis kullanımı
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024&seed={idx+100}"
         
-        response = requests.get(video_url, timeout=120)
-        
-        if response.status_code == 200 and len(response.content) > 10000:
+        res = requests.get(url, timeout=90)
+        if res.status_code == 200 and len(res.content) > 5000:
             with open(output_path, "wb") as f:
-                f.write(response.content)
-            logger.info(f"✅ Klip {idx+1} T2V motorundan başarıyla indirildi.")
+                f.write(res.content)
+            logger.info(f"✅ Klip {idx+1} indirildi.")
             return True
-        else:
-            logger.warning(f"⚠️ Video API yanıtı yetersiz veya başarısız: HTTP {response.status_code}")
     except Exception as e:
-        logger.error(f"❌ Video üretme hatası: {e}")
+        logger.error(f"Video alma hatası: {e}")
 
     return False
 
@@ -114,7 +99,6 @@ def download_audio() -> str:
         if res.status_code == 200:
             with open(audio_path, "wb") as f:
                 f.write(res.content)
-            logger.info("🎵 Arka plan müziği indirildi.")
     except Exception as e:
         logger.warning(f"Müzik indirilemedi: {e}")
     return str(audio_path)
@@ -136,7 +120,7 @@ def main():
                 logger.warning(f"Klip okunamadı: {e}")
 
     if not video_clips:
-        logger.error("❌ Hiçbir video klibi oluşturulamadı. İşlem durduruluyor.")
+        logger.error("❌ Video oluşturulamadı. İşlem durduruluyor.")
         sys.exit(1)
 
     try:
@@ -148,7 +132,6 @@ def main():
                 if audio_clip.duration > final_video.duration:
                     audio_clip = audio_clip.subclipped(0, final_video.duration)
                 final_video = final_video.with_audio(audio_clip)
-                logger.info("🔊 Müzik videoya bağlandı.")
             except Exception as e:
                 logger.warning(f"Ses eklenemedi: {e}")
 
@@ -179,7 +162,7 @@ def main():
             }
             media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
             youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Hareketli 3D Short YouTube'a yüklendi!")
+            logger.info("🎉 Video YouTube'a yüklendi!")
 
     except Exception as e:
         logger.error(f"Kurgu/Yükleme hatası: {e}")
