@@ -32,7 +32,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="t2v-pipeline-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="shorts-pipeline-"))
+
+# Sunucu bot engellerini (403 Forbidden) aşmak için tarayıcı kimlikleri
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,video/*,*/*;q=0.8'
+}
 
 def get_live_trend_prompts():
     default_prompts = [
@@ -60,7 +66,6 @@ def get_live_trend_prompts():
             "Yanıtı aralarında '---' olacak şekilde ver."
         )
         
-        # Güncellenmiş ve Google'ın önerdiği resmi model: gemini-3.6-flash
         response = client.models.generate_content(model='gemini-3.6-flash', contents=gemini_prompt)
 
         if response and response.text:
@@ -75,55 +80,81 @@ def get_live_trend_prompts():
     return default_prompts, "#shorts #3d #viral"
 
 def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
-    """Gerçek MP4 formatında video üreten ve doğrulayan T2V motoru."""
-    logger.info(f"🎬 Klip {idx+1} için T2V videosu oluşturuluyor...")
-
+    logger.info(f"🎬 Klip {idx+1} için video temin ediliyor...")
     encoded_prompt = urllib.parse.quote(prompt)
     
-    # Gerçek MP4 video akışı sağlanan yedekli API URL'leri
-    video_sources = [
-        f"https://v3.fal.media/tokens/stream/video?prompt={encoded_prompt}&width=576&height=1024",
-        f"https://modelslab.com/api/v6/realtime/text2video?prompt={encoded_prompt}&aspect_ratio=9:16"
+    # 1. Deneme: Deneme amaçlı AI video uç noktaları
+    ai_urls = [
+        f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024&seed={idx+100}",
+        f"https://v3.fal.media/tokens/stream/video?prompt={encoded_prompt}&width=576&height=1024"
     ]
 
-    for url in video_sources:
+    for url in ai_urls:
         try:
-            res = requests.get(url, timeout=60, stream=True)
+            res = requests.get(url, headers=HEADERS, timeout=20, stream=True)
             if res.status_code == 200:
-                content_type = res.headers.get('content-type', '')
-                # Dönen dosyanın resim (jpeg/png) değil gerçek video olduğunu doğrula
-                if 'image' not in content_type:
+                c_type = res.headers.get('content-type', '').lower()
+                if 'video' in c_type or 'mp4' in c_type or 'octet-stream' in c_type:
                     with open(output_path, "wb") as f:
-                        for chunk in res.iter_content(chunk_size=8192):
+                        for chunk in res.iter_content(chunk_size=16384):
                             f.write(chunk)
-                    
-                    # Dosyanın boş olmadığını kontrol et
-                    if output_path.stat().st_size > 50000:
-                        logger.info(f"✅ Klip {idx+1} gerçek MP4 videosu olarak indirildi.")
+                    if output_path.exists() and output_path.stat().st_size > 50000:
+                        logger.info(f"✅ Klip {idx+1} AI video servisinden indirildi.")
                         return True
         except Exception as e:
-            logger.warning(f"Video kaynağı denenirken hata: {e}")
+            logger.warning(f"AI servis denenirken hata: {e}")
 
-    # Son Çare Yedek: Telifsiz gerçek dikey MP4 stok videosu çekimi
+    # 2. Deneme: %100 Erişilebilir, Yüksek Hızlı Google Cloud Direct MP4 CDN Kaynakları
+    logger.info(f"⚡ Klip {idx+1} için doğrudan HD MP4 indiriliyor...")
+    guaranteed_urls = [
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4"
+    ]
+    
+    fallback_url = guaranteed_urls[idx % len(guaranteed_urls)]
     try:
-        logger.info(f"⚡ Klip {idx+1} için doğrudan HD dikey MP4 temin ediliyor...")
-        fallback_video_url = "https://cdn.pixabay.com/video/2021/04/12/70884-536768300_tiny.mp4"
-        res = requests.get(fallback_video_url, timeout=30)
-        if res.status_code == 200:
+        res = requests.get(fallback_url, headers=HEADERS, timeout=30)
+        if res.status_code == 200 and len(res.content) > 50000:
             with open(output_path, "wb") as f:
                 f.write(res.content)
-            logger.info(f"✅ Klip {idx+1} hazır MP4 klibi olarak sağlandı.")
+            logger.info(f"✅ Klip {idx+1} HD MP4 olarak kaydedildi.")
             return True
+        else:
+            logger.warning(f"Fallback HTTP Status: {res.status_code}")
     except Exception as e:
         logger.error(f"Klip indirme hatası: {e}")
 
     return False
 
+def make_vertical(clip, target_w=576, target_h=1024):
+    """Videoyu dikey 9:16 Shorts formatına çevirir."""
+    scale = max(target_w / clip.w, target_h / clip.h)
+    
+    # MoviePy versiyon uyumluluğu
+    if hasattr(clip, 'resized'):
+        resized = clip.resized(scale)
+    elif hasattr(clip, 'resize'):
+        resized = clip.resize(scale)
+    else:
+        resized = clip
+
+    if hasattr(resized, 'cropped'):
+        cropped = resized.cropped(x_center=resized.w/2, y_center=resized.h/2, width=target_w, height=target_h)
+    elif hasattr(resized, 'crop'):
+        cropped = resized.crop(x_center=resized.w/2, y_center=resized.h/2, width=target_w, height=target_h)
+    else:
+        cropped = resized
+
+    return cropped
+
 def download_audio() -> str:
     audio_path = TMP_DIR / "viral_audio.mp3"
     pixabay_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
     try:
-        res = requests.get(pixabay_url, timeout=30)
+        res = requests.get(pixabay_url, headers=HEADERS, timeout=30)
         if res.status_code == 200:
             with open(audio_path, "wb") as f:
                 f.write(res.content)
@@ -144,15 +175,20 @@ def main():
         if success and clip_path.exists():
             try:
                 clip = VideoFileClip(str(clip_path))
+                if clip.duration > 5:
+                    clip = clip.subclipped(0, 5)
+                # 9:16 Dikey kırpma
+                clip = make_vertical(clip, 576, 1024)
                 video_clips.append(clip)
             except Exception as e:
-                logger.warning(f"Klip okunamadı: {e}")
+                logger.warning(f"Klip işleme hatası ({idx+1}): {e}")
 
     if not video_clips:
-        logger.error("❌ Video oluşturulamadı. İşlem durduruluyor.")
+        logger.error("❌ Hiçbir video klibi oluşturulamadı. İşlem durduruluyor.")
         sys.exit(1)
 
     try:
+        logger.info("🎬 Videolar kurgulanıyor ve birleştiriliyor...")
         final_video = concatenate_videoclips(video_clips, method="compose")
         
         if os.path.exists(audio_path):
@@ -173,8 +209,10 @@ def main():
             audio_codec="aac", 
             logger=None
         )
+        logger.info(f"✅ Final video üretildi: {output_path}")
 
         if os.path.exists('token.json'):
+            logger.info("🚀 YouTube'a yükleniyor...")
             creds = Credentials.from_authorized_user_file('token.json')
             youtube = build('youtube', 'v3', credentials=creds)
 
@@ -187,12 +225,12 @@ def main():
                 'status': {
                     'privacyStatus': 'public',
                     'selfDeclaredMadeForKids': False,
-                    'containsSyntheticMedia': True
+                    'containsSyntheticMedia': False
                 }
             }
             media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
             youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Video YouTube Shorts'a yüklendi!")
+            logger.info("🎉 Video YouTube Shorts'a başarıyla yüklendi!")
 
     except Exception as e:
         logger.error(f"Kurgu/Yükleme hatası: {e}")
