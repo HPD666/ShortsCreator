@@ -159,7 +159,7 @@ def analyze_live_trends_for_t2v():
     )
     
     response = None
-    models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']
+    models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash']
     
     for model_name in models_to_try:
         for attempt in range(3):
@@ -171,7 +171,11 @@ def analyze_live_trends_for_t2v():
                     break
             except Exception as e:
                 logger.warning(f"⚠️ {model_name} (Attempt {attempt + 1}) failed: {e}")
-                time.sleep(3)
+                if "429" in str(e):
+                    logger.info("⏳ Kota aşımı nedeniyle 35 saniye bekleniyor...")
+                    time.sleep(35)
+                else:
+                    time.sleep(3)
         
         if response and response.text:
             break
