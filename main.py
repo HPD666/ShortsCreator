@@ -55,7 +55,6 @@ def render_modal_video(prompt: str) -> bytes:
     from diffusers.utils import export_to_video
     import tempfile
 
-    # Modal A10G GPU üzerinde LTX-Video modelini yükler
     pipe = LTXPipeline.from_pretrained(
         "Lightricks/LTX-Video",
         torch_dtype=torch.bfloat16
@@ -121,7 +120,16 @@ def analyze_live_trends_for_t2v():
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
-    response = client.models.generate_content(model='gemini-1.5-flash', contents=gemini_prompt)
+    # Model ismi güncellendi ve hata önleyici fallback mekanizması eklendi
+    response = None
+    for model_name in ['gemini-2.5-flash', 'gemini-2.0-flash']:
+        try:
+            logger.info(f"🤖 Requesting Gemini model: {model_name}...")
+            response = client.models.generate_content(model=model_name, contents=gemini_prompt)
+            if response and response.text:
+                break
+        except Exception as e:
+            logger.warning(f"⚠️ {model_name} ile istek başarısız oldu: {e}")
 
     if not response or not response.text:
         logger.error("❌ Gemini trend analizinde hata oluştu.")
@@ -146,7 +154,6 @@ def generate_ai_video_clip(prompt: str, idx: int) -> str:
     output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
 
     try:
-        # Modal sunucusunda video oluşturulur
         with app.run():
             video_bytes = render_modal_video.remote(prompt)
             
