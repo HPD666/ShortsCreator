@@ -33,6 +33,7 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
 
 YT_API_KEY = os.environ.get("YT_API_KEY", None)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
@@ -40,7 +41,7 @@ TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-t2v-"))
 
 def analyze_live_trends_for_t2v():
     if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
-        logger.error("❌ YT_API_KEY veya GEMINI_API_KEY eksik!")
+        logger.error("❌ EKSIK API KEY! YT_API_KEY ve GEMINI_API_KEY tanımlı olmalıdır.")
         sys.exit(1)
 
     logger.info("🔥 Live YouTube Shorts trends fetching...")
@@ -61,8 +62,8 @@ def analyze_live_trends_for_t2v():
     client = genai.Client(api_key=GEMINI_API_KEY)
     gemini_prompt = (
         f"Based on trends: '{trend_context}'. "
-        "Write 3 detailed English prompts for 3D realistic motion scenes (e.g., 'A photorealistic 3D cinematic camera shot of...'). "
-        "Provide a 3-word English overlay text for each scene. "
+        "Write 3 detailed English prompts for realistic 3D cinematic animated motion scenes. "
+        "Also provide a 3-word English overlay text for each scene. "
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
@@ -86,23 +87,22 @@ def analyze_live_trends_for_t2v():
     return parsed_data[:3], f"Trending Now #{titles[0].split()[0].replace('#', '')} #shorts #ai"
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
-    logger.info(f"🤖 Generating AI Video {idx+1} for prompt: '{prompt[:40]}...'")
+    logger.info(f"🤖 Generating AI Video {idx+1} with HF Token: '{prompt[:40]}...'")
     output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
 
-    # Aktif ve çalışan ücretsiz T2V Space listesi
     active_spaces = [
         ("Lightricks/LTX-Video-Demo", "/generate_video"),
-        ("Wild-Card/LTX-Video", "/predict"),
-        ("ginipick/text-to-video", "/predict")
+        ("KingNish/Realtime-Text-to-Video", "/predict"),
+        ("fffilimonov/zeroscope_v2_xl", "/generate")
     ]
 
     for space_name, api_endpoint in active_spaces:
         try:
-            logger.info(f"🔄 Trying HuggingFace Space: {space_name}...")
-            client = GradioClient(space_name)
-            result = client.predict(prompt, api_name=api_endpoint)
+            logger.info(f"🔄 Authenticating & Requesting: {space_name}...")
+            # HF_TOKEN ile yetkili istemci başlatılıyor
+            client = GradioClient(space_name, hf_token=HF_TOKEN) if HF_TOKEN else GradioClient(space_name)
             
-            # Bazı modeller tuple (video_path, subtitle) döndürebilir
+            result = client.predict(prompt, api_name=api_endpoint)
             video_file = result[0] if isinstance(result, (list, tuple)) else result
 
             if video_file and os.path.exists(video_file):
@@ -112,7 +112,7 @@ def generate_ai_video_clip(prompt: str, idx: int) -> str:
         except Exception as e:
             logger.warning(f"Space {space_name} failed: {e}")
 
-    logger.error(f"❌ All free AI T2V spaces failed for clip {idx+1}.")
+    logger.error(f"❌ All AI T2V spaces failed for clip {idx+1}.")
     return None
 
 def main():
