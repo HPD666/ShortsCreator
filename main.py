@@ -1,141 +1,126 @@
-import os
-import sys
-import logging
-import tempfile
-import requests
-import subprocess
+import os, sys, logging, tempfile, requests, subprocess, json
 from pathlib import Path
-
-from gradio_client import Client
-from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
+from datetime import datetime
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
+from gradio_client import Client
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("pure-t2v-bot")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("shorts-autopilot")
 
-# Token Kontrolleri
-if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
-    try:
-        with open('token.json', 'w') as f:
-            f.write(os.environ['TOKEN_JSON'])
-    except Exception as e:
-        logger.warning(f"token.json yazılamadı: {e}")
+# Secrets
+YT_API_KEY = os.environ.get("YT_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if "TOKEN_JSON" in os.environ and os.environ["TOKEN_JSON"].strip():
+    with open("token.json", "w") as f:
+        f.write(os.environ["TOKEN_JSON"])
 
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
+OUT_DIR = Path("outputs"); OUT_DIR.mkdir(exist_ok=True)
+TMP_DIR = Path(tempfile.mkdtemp(prefix="shorts-"))
 
-OUT_DIR = Path("outputs")
-OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="t2v-pipeline-"))
+# --- Trend Discovery ---
+def fetch_shorts():
+    youtube = build("youtube", "v3", developerKey=YT_API_KEY)
+    res = youtube.search().list(
+        part="snippet",
+        type="video",
+        videoDuration="short",
+        order="date",
+        maxResults=20
+    ).execute()
+    return res.get("items", [])
 
-CHARACTER_3D_STYLE = "3D Pixar style cute robot character, realistic 3D render, vertical 9:16"
+def cluster_by_title(videos):
+    clusters = {}
+    for v in videos:
+        title = v["snippet"]["title"].lower()
+        key = "".join(sorted(set(title.split())))
+        clusters.setdefault(key, []).append(v)
+    return clusters
 
-PROMPTS = [
-    f"{CHARACTER_3D_STYLE}, robot looking at smartphone shocked",
-    f"{CHARACTER_3D_STYLE}, robot dancing energetic viral dance",
-    f"{CHARACTER_3D_STYLE}, robot celebrating with colorful confetti"
-]
+def pioneer_video(clusters):
+    for key, vids in clusters.items():
+        vids.sort(key=lambda x: x["snippet"]["publishedAt"])
+        return vids[0]  # ilk kümenin pioneer'ı
 
-def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
-    """Hugging Face yetkili tokenı ile Metinden-Videoya (T2V) üretimi yapar."""
-    logger.info(f"🎬 Klip {idx+1} için Metinden-Videoya (T2V) üretiliyor...")
+# --- Gemini API ---
+def gemini_verify_and_prompt(thumbnail_url, title):
+    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": f"Verify if this thumbnail represents a real Shorts trend: {title}"},
+                {"inline_data": {"mime_type":"image/jpeg","data":requests.get(thumbnail_url).content}}
+            ]
+        }]
+    }
+    r = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+                      headers=headers, json=payload)
+    if r.status_code == 200:
+        logger.info("Gemini doğrulama başarılı")
+    # Prompt üret
+    prompt_payload = {
+        "contents": [{"parts":[{"text":f"Generate a detailed English video generation prompt for AI video tools based on trend: {title}"}]}]
+    }
+    r2 = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+                       headers=headers, json=prompt_payload)
+    return r2.json()["candidates"][0]["content"]["parts"][0]["text"]
 
-    spaces = [
-        "Wan-AI/Wan2.1-T2V-1.3B",
-        "artificialguybr/CogVideoX-5B-Text2Video",
-        "fffiloni/ZeroScope-T2V"
-    ]
-
-    for space_name in spaces:
+# --- Video Generation ---
+def generate_video(prompt, idx):
+    spaces = ["Wan-AI/Wan2.1-T2V-1.3B","artificialguybr/CogVideoX-5B-Text2Video","fffiloni/ZeroScope-T2V"]
+    out_path = TMP_DIR / f"clip_{idx}.mp4"
+    for space in spaces:
         try:
-            logger.info(f"🔄 HF Space bağlanıyor: {space_name}")
-            # hf_token parametresi 401 yetki hatasını engeller
-            client = Client(space_name, hf_token=HF_TOKEN, verbose=False)
-            
+            client = Client(space, hf_token=HF_TOKEN)
             job = client.submit(prompt=prompt, api_name="/predict")
             result = job.result(timeout=180)
-            
             if result and os.path.exists(str(result)):
-                with open(result, "rb") as src, open(output_path, "wb") as dst:
-                    dst.write(src.read())
-                logger.info(f"✅ Klip {idx+1} başarıyla üretildi ({space_name})")
-                return True
+                with open(result,"rb") as src, open(out_path,"wb") as dst: dst.write(src.read())
+                return str(out_path)
         except Exception as e:
-            logger.warning(f"⚠️ {space_name} geçildi: {e}")
+            logger.warning(f"{space} failed: {e}")
+    return None
 
-    return False
+# --- Audio ---
+def download_audio():
+    url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
+    path = TMP_DIR / "bg.mp3"
+    r = requests.get(url); open(path,"wb").write(r.content)
+    return str(path)
 
-def download_audio() -> str:
-    audio_path = TMP_DIR / "viral_audio.mp3"
-    pixabay_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
-    try:
-        res = requests.get(pixabay_url, timeout=30)
-        if res.status_code == 200:
-            with open(audio_path, "wb") as f:
-                f.write(res.content)
-            logger.info("🎵 Arka plan müziği indirildi.")
-    except Exception as e:
-        logger.warning(f"Müzik indirilemedi: {e}")
-    return str(audio_path)
+# --- Upload ---
+def upload_to_youtube(video_path, title):
+    creds = Credentials.from_authorized_user_file("token.json")
+    youtube = build("youtube","v3",credentials=creds)
+    body = {
+        "snippet":{"title":f"{title} #shorts","description":"#trend","categoryId":"22"},
+        "status":{"privacyStatus":"public","selfDeclaredMadeForKids":False,"containsSyntheticMedia":True}
+    }
+    media = MediaFileUpload(video_path,resumable=True,mimetype="video/mp4")
+    youtube.videos().insert(part="snippet,status",body=body,media_body=media).execute()
+    logger.info("Video YouTube'a yüklendi!")
 
+# --- Main ---
 def main():
+    videos = fetch_shorts()
+    clusters = cluster_by_title(videos)
+    pioneer = pioneer_video(clusters)
+    title = pioneer["snippet"]["title"]
+    thumb = pioneer["snippet"]["thumbnails"]["high"]["url"]
+    prompt = gemini_verify_and_prompt(thumb,title)
+    clip_path = generate_video(prompt,0)
+    if not clip_path: sys.exit("Video üretilemedi")
     audio_path = download_audio()
-    video_clips = []
+    final = OUT_DIR / "short_video.mp4"
+    clip = VideoFileClip(clip_path)
+    audio = AudioFileClip(audio_path).subclip(0,clip.duration)
+    clip = clip.set_audio(audio)
+    clip.write_videofile(str(final),fps=24,codec="libx264",audio_codec="aac",logger=None)
+    upload_to_youtube(str(final),title)
 
-    for idx, prompt in enumerate(PROMPTS):
-        clip_path = TMP_DIR / f"pure_clip_{idx}.mp4"
-        success = generate_t2v_video(prompt, idx, clip_path)
-        if success and clip_path.exists():
-            try:
-                clip = VideoFileClip(str(clip_path))
-                video_clips.append(clip)
-            except Exception as e:
-                logger.warning(f"Klip okunamadı: {e}")
-
-    if not video_clips:
-        logger.error("❌ Sunuculardan klip alınamadı. Lütfen HF_TOKEN eklendiğinden emin olun.")
-        sys.exit(0)
-
-    try:
-        final_video = concatenate_videoclips(video_clips, method="compose")
-        
-        if os.path.exists(audio_path):
-            try:
-                audio_clip = AudioFileClip(audio_path)
-                if audio_clip.duration > final_video.duration:
-                    audio_clip = audio_clip.subclipped(0, final_video.duration)
-                final_video = final_video.with_audio(audio_clip)
-                logger.info("🔊 Ses eklendi.")
-            except Exception as e:
-                logger.warning(f"Ses eklenemedi: {e}")
-
-        output_path = OUT_DIR / "short_video.mp4"
-        final_video.write_videofile(str(output_path), fps=24, codec="libx264", audio_codec="aac", logger=None)
-
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json')
-            youtube = build('youtube', 'v3', credentials=creds)
-
-            body = {
-                'snippet': {
-                    'title': '#shorts #3d #viral #trending',
-                    'description': '#shorts #3d #viral',
-                    'categoryId': '22'
-                },
-                'status': {
-                    'privacyStatus': 'public',
-                    'selfDeclaredMadeForKids': False,
-                    'containsSyntheticMedia': True
-                }
-            }
-            media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
-            youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Videolu ve Sesli Short YouTube'a yüklendi!")
-
-    except Exception as e:
-        logger.error(f"İşlem hatası: {e}")
-        sys.exit(0)
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
