@@ -7,7 +7,8 @@ import shutil
 from pathlib import Path
 
 from gradio_client import Client
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
+# MoviePy 2.0+ uyumlu içe aktarma
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
@@ -75,7 +76,6 @@ def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
     """Yalnızca doğrudan video (MP4) üreten T2V sunucularını tetikler."""
     logger.info(f"🎬 Klip {idx+1} için T2V yapay zekası çalıştırılıyor...")
 
-    # Aktif çalışan Text-to-Video sunucuları
     t2v_spaces = [
         {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
         {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"},
@@ -95,7 +95,6 @@ def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
                 item = result[0]
                 video_file = item if isinstance(item, str) else item.get("video")
 
-            # Yalnızca geçerli bir MP4 video dosyasıysa kabul et
             if video_file and os.path.exists(video_file) and str(video_file).lower().endswith('.mp4'):
                 shutil.copy(video_file, str(output_path))
                 logger.info(f"✅ Klip {idx+1} doğrudan video olarak üretildi.")
@@ -145,8 +144,8 @@ def main():
             try:
                 audio_clip = AudioFileClip(audio_path)
                 if audio_clip.duration > final_video.duration:
-                    audio_clip = audio_clip.subclip(0, final_video.duration)
-                final_video = final_video.set_audio(audio_clip)
+                    audio_clip = audio_clip.subclipped(0, final_video.duration)
+                final_video = final_video.with_audio(audio_clip)
             except Exception as e:
                 logger.warning(f"Ses eklenemedi: {e}")
 
