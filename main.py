@@ -4,11 +4,10 @@ import logging
 import tempfile
 import requests
 import shutil
-import urllib.parse
 from pathlib import Path
 
 from gradio_client import Client
-from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, ImageClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
@@ -39,17 +38,16 @@ OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="t2v-pipeline-"))
 
-# 1. CANLI TREND VE PROMPT ÜRETİMİ (YouTube API + Gemini)
+# 1. CANLI TREND VE PROMPT ÜRETİMİ
 def get_live_trend_prompts():
-    """Canlı YouTube Shorts trendlerini çeker ve Gemini ile 3D video promptlarına dönüştürür."""
     default_prompts = [
-        "3D Pixar style cute robot character, realistic 3D render, vertical 9:16, looking at smartphone shocked",
-        "3D Pixar style cute robot character, realistic 3D render, vertical 9:16, dancing energetic viral dance",
-        "3D Pixar style cute robot character, realistic 3D render, vertical 9:16, celebrating with colorful confetti"
+        "3D Pixar style cute robot character, highly detailed, vertical 9:16, shocked looking at smartphone",
+        "3D Pixar style cute robot character, highly detailed, vertical 9:16, dancing energetic viral dance",
+        "3D Pixar style cute robot character, highly detailed, vertical 9:16, celebrating with colorful confetti"
     ]
     
     if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
-        logger.warning("YT_API_KEY, GEMINI_API_KEY veya google-genai kütüphanesi eksik. Varsayılan 3D konsept kullanılıyor.")
+        logger.warning("Eksik API veya kütüphane. Varsayılan 3D konsept kullanılıyor.")
         return default_prompts, "#shorts #3d #viral #trending"
 
     try:
@@ -59,13 +57,12 @@ def get_live_trend_prompts():
         
         titles = [item['snippet']['title'] for item in res.get('items', [])]
         trend_context = " | ".join(titles)
-        logger.info(f"Yakalayan Trendler: {trend_context[:100]}...")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         gemini_prompt = (
-            f"Şu an YouTube Shorts'ta popüler olan konular: '{trend_context}'. "
-            "Bu trende uygun 3D Pixar/Disney stilinde 9:16 dikey formatta 3 farklı video sahne tanımı (İngilizce prompt) yaz. "
-            "Promptlar sadece video nesnesini tarif etsin. Yanıtı aralarında '---' olacak şekilde tek metinde ver."
+            f"YouTube Shorts trendleri: '{trend_context}'. "
+            "Bu trende uygun 3D Pixar stilinde 9:16 dikey formatta 3 farklı sahne tanımı (İngilizce prompt) yaz. "
+            "Yanıtı aralarında '---' olacak şekilde tek metinde ver."
         )
         
         response = client.models.generate_content(model='gemini-2.5-flash', contents=gemini_prompt)
@@ -79,40 +76,56 @@ def get_live_trend_prompts():
         
     return default_prompts, "#shorts #3d #viral"
 
-# 2. GERÇEK T2V VİDEO ÜRETİMİ
-def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
-    """Aktif T2V modellerini kullanarak gerçek MP4 videosu üretir."""
-    logger.info(f"🎬 Klip {idx+1} için T2V üretimi başlatıldı...")
+# 2. GARANTİLİ VİDEO / GÖRSEL ÜRETİCİ
+def generate_clip(prompt: str, idx: int, output_path: Path) -> bool:
+    """Önce T2V dener; başarısız olursa 3D görseli videoya dönüştürür."""
+    logger.info(f"🎬 Klip {idx+1} oluşturuluyor...")
 
+    # Yöntem A: HuggingFace Text-To-Video Spaces
     spaces_config = [
         {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"},
         {"space": "fffiloni/ZeroScope-T2V", "api_name": "/predict"}
     ]
 
     for config in spaces_config:
-        space_name = config["space"]
-        api_name = config["api_name"]
         try:
-            logger.info(f"🔄 HF Space deneniyor: {space_name}")
-            client = Client(space_name, token=HF_TOKEN, verbose=False) if HF_TOKEN else Client(space_name, verbose=False)
-            result = client.predict(prompt, api_name=api_name)
+            client = Client(config["space"], token=HF_TOKEN, verbose=False) if HF_TOKEN else Client(config["space"], verbose=False)
+            result = client.predict(prompt, api_name=config["api_name"])
             
             video_file = None
             if isinstance(result, str) and os.path.exists(result):
                 video_file = result
             elif isinstance(result, (list, tuple)) and len(result) > 0:
                 item = result[0]
-                if isinstance(item, str) and os.path.exists(item):
-                    video_file = item
-                elif isinstance(item, dict) and "video" in item:
-                    video_file = item["video"]
+                video_file = item if isinstance(item, str) else item.get("video")
 
             if video_file and os.path.exists(video_file) and str(video_file).endswith('.mp4'):
                 shutil.copy(video_file, str(output_path))
-                logger.info(f"✅ Klip {idx+1} başarıyla T2V olarak üretildi.")
+                logger.info(f"✅ Klip {idx+1} HF T2V ile üretildi.")
                 return True
         except Exception as e:
-            logger.warning(f"⚠️ {space_name} başarısız: {e}")
+            logger.warning(f"⚠️ HF Space ({config['space']}) es geçildi: {e}")
+
+    # Yöntem B (Garantili Yedek): 3D Dikey Görsel üret ve 3s MP4 klip yap
+    try:
+        logger.info(f"⚡ Klip {idx+1} için yedek motor (Görsel -> Video) çalıştırılıyor...")
+        encoded_prompt = requests.utils.quote(prompt)
+        img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={idx+100}"
+        
+        res = requests.get(img_url, timeout=45)
+        if res.status_code == 200 and len(res.content) > 5000:
+            temp_img = TMP_DIR / f"frame_{idx}.jpg"
+            with open(temp_img, "wb") as f:
+                f.write(res.content)
+            
+            # Görseli 3 saniyelik dikey videoya çevir
+            img_clip = ImageClip(str(temp_img)).set_duration(3)
+            img_clip.write_videofile(str(output_path), fps=24, codec="libx264", logger=None)
+            img_clip.close()
+            logger.info(f"✅ Klip {idx+1} yedek motordan başarıyla oluşturuldu.")
+            return True
+    except Exception as e:
+        logger.error(f"❌ Yedek motor hatası: {e}")
 
     return False
 
@@ -130,7 +143,7 @@ def download_audio() -> str:
         logger.warning(f"Müzik indirilemedi: {e}")
     return str(audio_path)
 
-# 4. ANA AKIŞ VE ORAN DÜZELTME
+# 4. ANA AKIŞ
 def main():
     prompts, video_title = get_live_trend_prompts()
     audio_path = download_audio()
@@ -138,18 +151,18 @@ def main():
 
     for idx, prompt in enumerate(prompts):
         clip_path = TMP_DIR / f"pure_clip_{idx}.mp4"
-        success = generate_t2v_video(prompt, idx, clip_path)
+        success = generate_clip(prompt, idx, clip_path)
         
         if success and clip_path.exists():
             try:
                 clip = VideoFileClip(str(clip_path))
                 video_clips.append(clip)
             except Exception as e:
-                logger.warning(f"Klip işlenemedi: {e}")
+                logger.warning(f"Klip okunamadı: {e}")
 
     if not video_clips:
-        logger.error("❌ Üretilen geçerli klip bulunamadı.")
-        sys.exit(0)
+        logger.error("❌ Hiçbir kaynaktan klip üretilemedi.")
+        sys.exit(1)
 
     try:
         final_video = concatenate_videoclips(video_clips, method="compose")
@@ -158,10 +171,10 @@ def main():
             try:
                 audio_clip = AudioFileClip(audio_path)
                 if audio_clip.duration > final_video.duration:
-                    audio_clip = audio_clip.subclipped(0, final_video.duration)
-                final_video = final_video.with_audio(audio_clip)
+                    audio_clip = audio_clip.subclip(0, final_video.duration)
+                final_video = final_video.set_audio(audio_clip)
             except Exception as e:
-                logger.warning(f"Ses birleştirme hatası: {e}")
+                logger.warning(f"Ses eklenemedi: {e}")
 
         output_path = OUT_DIR / "short_video.mp4"
         final_video.write_videofile(
@@ -191,11 +204,11 @@ def main():
             }
             media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
             youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Viral 3D Short YouTube'a yüklendi!")
+            logger.info("🎉 Video YouTube Shorts'a yüklendi!")
 
     except Exception as e:
         logger.error(f"Kurgu/Yükleme hatası: {e}")
-        sys.exit(0)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
