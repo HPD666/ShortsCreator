@@ -33,12 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. MODAL GPU ORTAMI VE MODEL ÖN YÜKLEME KURULUMU
-def download_model_weights():
-    import torch
-    from diffusers import LTXPipeline
-    LTXPipeline.from_pretrained("Lightricks/LTX-Video", torch_dtype=torch.bfloat16)
-
+# 1. MODAL İMAJ TANIMI (İmaj Derleme Hızlı ve Hafif Tutuldu)
 modal_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -49,37 +44,41 @@ modal_image = (
         "sentencepiece",
         "imageio-ffmpeg"
     )
-    .run_function(download_model_weights)
 )
 
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. MODAL GPU BULUTUNDA ÇALIŞACAK UZAK VİDEO RENDER FONKSİYONU
-@app.function(gpu="a10g", timeout=900)
-def render_modal_video(prompt: str) -> bytes:
-    import torch
-    from diffusers import LTXPipeline
-    from diffusers.utils import export_to_video
-    import tempfile
+# 2. MODAL GPU SINIFI (Model GPU Açıldığında Bir Kez Yüklenir)
+@app.cls(gpu="a10g", timeout=900)
+class VideoGenerator:
+    @modal.enter()
+    def load_model(self):
+        import torch
+        from diffusers import LTXPipeline
+        logger.info("⚡ GPU Konteynırı Hazırlanıyor: LTX-Video Modeli Yükleniyor...")
+        self.pipe = LTXPipeline.from_pretrained(
+            "Lightricks/LTX-Video",
+            torch_dtype=torch.bfloat16
+        ).to("cuda")
 
-    pipe = LTXPipeline.from_pretrained(
-        "Lightricks/LTX-Video",
-        torch_dtype=torch.bfloat16
-    ).to("cuda")
+    @modal.method()
+    def render(self, prompt: str) -> bytes:
+        import tempfile
+        from diffusers.utils import export_to_video
 
-    video_frames = pipe(
-        prompt=prompt,
-        num_inference_steps=25,
-        height=512,
-        width=512,
-        num_frames=25,
-    ).frames[0]
+        video_frames = self.pipe(
+            prompt=prompt,
+            num_inference_steps=25,
+            height=512,
+            width=512,
+            num_frames=25,
+        ).frames[0]
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-        export_to_video(video_frames, tmp.name, fps=8)
-        with open(tmp.name, "rb") as f:
-            return f.read()
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            export_to_video(video_frames, tmp.name, fps=8)
+            with open(tmp.name, "rb") as f:
+                return f.read()
 
 
 # OAuth Token Yönetimi
@@ -123,8 +122,8 @@ def analyze_live_trends_for_t2v():
     gemini_prompt = (
         f"Analyze these trending YouTube Shorts titles: '{trend_context}'. "
         "Identify the core trending visual action or concept (e.g., flying, jumping, superhero motion, viral challenge). "
-        "Write 3 detailed English text-to-video prompts depicting a REAL PERSON or REALISTIC CHARACTER performing that exact trending action (e.g. flying through city, doing the stunt). "
-        "CRITICAL: The style MUST BE hyper-realistic, photorealistic, 8k resolution, shot on 35mm lens, realistic physics, cinematic movie scene, highly detailed photoreal human. Do NOT make it cartoon or 3D animated style. "
+        "Write 3 detailed English text-to-video prompts depicting a REAL PERSON or REALISTIC CHARACTER performing that exact trending action. "
+        "CRITICAL: Style MUST BE hyper-realistic, photorealistic, 8k resolution, cinematic movie scene. Do NOT make it cartoon. "
         "Also provide a catchy 3-word English overlay text for each scene. "
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
@@ -164,12 +163,13 @@ def main():
 
     logger.info("🚀 Modal GPU oturumu başlatılıyor...")
     with app.run():
+        generator = VideoGenerator()
         for idx, scene in enumerate(scenes):
-            logger.info(f"🤖 Generating AI Video {idx+1}/3 on Modal GPU: '{scene['prompt'][:40]}...'")
+            logger.info(f"🤖 Generating AI Video {idx+1}/3 on Modal GPU...")
             output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
 
             try:
-                video_bytes = render_modal_video.remote(scene["prompt"])
+                video_bytes = generator.render.remote(scene["prompt"])
                 with open(output_path, "wb") as f:
                     f.write(video_bytes)
 
@@ -177,14 +177,14 @@ def main():
                     logger.info(f"✅ AI Video Clip {idx+1} Modal üzerinde hazırlandı!")
                     clip = VideoFileClip(str(output_path))
 
-                    # 🎬 VİDEOYU DIKEY (9:16 SHORTS) FORMATINA GEÇİRME
+                    # 🎬 DIKEY (9:16 SHORTS) FORMAT
                     clip_resized = clip.resized(height=1920)
                     vertical_clip = clip_resized.cropped(
                         x_center=clip_resized.w / 2, 
                         width=1080
                     )
 
-                    # 📝 YAZI KAPLAMASI (TEXT OVERLAY)
+                    # 📝 YAZI KAPLAMASI
                     txt_clip = TextClip(
                         text=scene["text"],
                         font_size=55,
@@ -195,7 +195,7 @@ def main():
                         size=(900, 300)
                     ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-                    # 🔊 SES SESLENDİRMESİ (TTS AUDIO)
+                    # 🔊 SESLENDİRME (TTS)
                     tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
                     tts = gTTS(text=scene["text"], lang='en')
                     tts.save(str(tts_path))
@@ -204,7 +204,6 @@ def main():
                     if audio_clip.duration > vertical_clip.duration:
                         audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
 
-                    # Video + Yazı + Ses Birleştirme
                     composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
                     video_clips.append(composite)
 
@@ -216,7 +215,7 @@ def main():
         sys.exit(1)
 
     try:
-        logger.info("🎬 Final video ve sesler kurgulanıyor...")
+        logger.info("🎬 Final video ve sesler birleştiriliyor...")
         final_video = concatenate_videoclips(video_clips, method="compose")
         output_file = OUT_DIR / "short_video.mp4"
         
@@ -227,7 +226,7 @@ def main():
             audio_codec="aac", 
             logger=None
         )
-        logger.info(f"✅ Sesli Final AI video kaydedildi: {output_file}")
+        logger.info(f"✅ Final AI video kaydedildi: {output_file}")
 
         if os.path.exists('token.json'):
             logger.info("🚀 YouTube Shorts'a yükleniyor...")
@@ -250,7 +249,7 @@ def main():
             
             upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
             video_id = upload_response.get('id')
-            logger.info(f"🎉 Video YouTube Shorts'a yüklendi! Video ID: {video_id}")
+            logger.info(f"🎉 Video YouTube Shorts'a yüklendi! ID: {video_id}")
 
             # 🚀 OTOMATİK BEĞENME (LIKE)
             if video_id:
