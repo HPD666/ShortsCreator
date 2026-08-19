@@ -1,34 +1,29 @@
 name: YouTube Otomatik Yukleme
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 12 * * *'
+  
+    - cron: '0 7 * * *'
+  workflow_dispatch: # İster elle çalıştırma butonu
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Repodaki kodları çek
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-    - name: Python Kur
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Python Kurulumu
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Sistem Bağımlılıklarını Kur (FFmpeg)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+      - name: Kütüphaneleri Yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 gtts moviepy requests
 
-    - name: Gerekli Python Kütüphanelerini Yükle
-      run: |
-        pip install google-auth-oauthlib google-api-python-client gTTS moviepy requests pytrends
-
-    - name: Python Kodunu Çalıştır
-      env:
-        TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-        CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
-      run: python main.py
+      - name: Botu Çalıştır
+        env:
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
+          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+        run: python main.py
