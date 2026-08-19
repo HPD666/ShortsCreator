@@ -1,126 +1,84 @@
-import os, sys, logging, tempfile, requests, subprocess, json
-from pathlib import Path
-from datetime import datetime
+import os
+import time
+import requests
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
-from gradio_client import Client
+from google.oauth2.credentials import Credentials
+from google import genai
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("shorts-autopilot")
+# API ANAHTARLARI
+YT_API_KEY = "YOUR_YOUTUBE_API_KEY"
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
 
-# Secrets
-YT_API_KEY = os.environ.get("YT_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-HF_TOKEN = os.environ.get("HF_TOKEN")
-if "TOKEN_JSON" in os.environ and os.environ["TOKEN_JSON"].strip():
-    with open("token.json", "w") as f:
-        f.write(os.environ["TOKEN_JSON"])
-
-OUT_DIR = Path("outputs"); OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="shorts-"))
-
-# --- Trend Discovery ---
-def fetch_shorts():
-    youtube = build("youtube", "v3", developerKey=YT_API_KEY)
-    res = youtube.search().list(
-        part="snippet",
-        type="video",
-        videoDuration="short",
-        order="date",
-        maxResults=20
+def get_viral_trend():
+    """1. Adım: Trend Akımı ve Görsel Konsepti Bulur"""
+    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
+    search_res = youtube.search().list(
+        q='shorts challenge meme', type='video', videoDuration='short', maxResults=5, part='snippet'
     ).execute()
-    return res.get("items", [])
 
-def cluster_by_title(videos):
-    clusters = {}
-    for v in videos:
-        title = v["snippet"]["title"].lower()
-        key = "".join(sorted(set(title.split())))
-        clusters.setdefault(key, []).append(v)
-    return clusters
+    v_ids = [item['id']['videoId'] for item in search_res.get('items', [])]
+    video_res = youtube.videos().list(id=','.join(v_ids), part='snippet,statistics').execute()
+    
+    top_video = max(video_res.get('items', []), key=lambda x: int(x['statistics'].get('viewCount', 0)))
+    title = top_video['snippet']['title']
+    
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    prompt = f"YouTube Shorts akımı: '{title}'. Bu akıma uygun 5 saniyelik görsel bir AI video üretmek için İngilizce kısa prompt yaz (sadece prompt metnini ver)."
+    
+    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+    return title, response.text.strip()
 
-def pioneer_video(clusters):
-    for key, vids in clusters.items():
-        vids.sort(key=lambda x: x["snippet"]["publishedAt"])
-        return vids[0]  # ilk kümenin pioneer'ı
+def generate_video_ai(prompt_text):
+    """2. Adım: API üzerinden MP4 Video Dosyası Üretir"""
+    print("🤖 Yapay zeka videosu oluşturuluyor...")
+    # Pollinations / Açık kaynak Video Generation API kullanımı
+    clean_prompt = requests.utils.quote(prompt_text)
+    video_url = f"https://image.pollinations.ai/prompt/{clean_prompt}?model=video&width=720&height=1280"
+    
+    res = requests.get(video_url)
+    video_filename = "generated_trend.mp4"
+    
+    with open(video_filename, "wb") as f:
+        f.write(res.content)
+    
+    return video_filename
 
-# --- Gemini API ---
-def gemini_verify_and_prompt(thumbnail_url, title):
-    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": f"Verify if this thumbnail represents a real Shorts trend: {title}"},
-                {"inline_data": {"mime_type":"image/jpeg","data":requests.get(thumbnail_url).content}}
-            ]
-        }]
+def upload_to_youtube(video_path, trend_title):
+    """3. Adım: Kanalına Otomatik Yükler"""
+    print("🚀 Video YouTube'a yükleniyor...")
+    creds = Credentials.from_authorized_user_file('token.json', ['https://www.googleapis.com/auth/youtube.upload'])
+    youtube = build('youtube', 'v3', credentials=creds)
+
+    request_body = {
+        'snippet': {
+            'title': f"{trend_title[:50]} #shorts",
+            'description': '#trend',
+            'tags': ['trend', 'shorts', 'viral'],
+            'categoryId': '22'
+        },
+        'status': {
+            'privacyStatus': 'public',
+            'selfDeclaredMadeForKids': False
+        }
     }
-    r = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-                      headers=headers, json=payload)
-    if r.status_code == 200:
-        logger.info("Gemini doğrulama başarılı")
-    # Prompt üret
-    prompt_payload = {
-        "contents": [{"parts":[{"text":f"Generate a detailed English video generation prompt for AI video tools based on trend: {title}"}]}]
-    }
-    r2 = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-                       headers=headers, json=prompt_payload)
-    return r2.json()["candidates"][0]["content"]["parts"][0]["text"]
 
-# --- Video Generation ---
-def generate_video(prompt, idx):
-    spaces = ["Wan-AI/Wan2.1-T2V-1.3B","artificialguybr/CogVideoX-5B-Text2Video","fffiloni/ZeroScope-T2V"]
-    out_path = TMP_DIR / f"clip_{idx}.mp4"
-    for space in spaces:
-        try:
-            client = Client(space, hf_token=HF_TOKEN)
-            job = client.submit(prompt=prompt, api_name="/predict")
-            result = job.result(timeout=180)
-            if result and os.path.exists(str(result)):
-                with open(result,"rb") as src, open(out_path,"wb") as dst: dst.write(src.read())
-                return str(out_path)
-        except Exception as e:
-            logger.warning(f"{space} failed: {e}")
-    return None
+    media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+    response = youtube.videos().insert(
+        part='snippet,status',
+        body=request_body,
+        media_body=media
+    ).execute()
 
-# --- Audio ---
-def download_audio():
-    url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
-    path = TMP_DIR / "bg.mp3"
-    r = requests.get(url); open(path,"wb").write(r.content)
-    return str(path)
+    print(f"✅ Otomatik Yükleme Tamamlandı! Video ID: {response['id']}")
 
-# --- Upload ---
-def upload_to_youtube(video_path, title):
-    creds = Credentials.from_authorized_user_file("token.json")
-    youtube = build("youtube","v3",credentials=creds)
-    body = {
-        "snippet":{"title":f"{title} #shorts","description":"#trend","categoryId":"22"},
-        "status":{"privacyStatus":"public","selfDeclaredMadeForKids":False,"containsSyntheticMedia":True}
-    }
-    media = MediaFileUpload(video_path,resumable=True,mimetype="video/mp4")
-    youtube.videos().insert(part="snippet,status",body=body,media_body=media).execute()
-    logger.info("Video YouTube'a yüklendi!")
+def job():
+    try:
+        title, video_prompt = get_viral_trend()
+        video_file = generate_video_ai(video_prompt)
+        upload_to_youtube(video_file, title)
+    except Exception as e:
+        print(f"Hata oluştu: {e}")
 
-# --- Main ---
-def main():
-    videos = fetch_shorts()
-    clusters = cluster_by_title(videos)
-    pioneer = pioneer_video(clusters)
-    title = pioneer["snippet"]["title"]
-    thumb = pioneer["snippet"]["thumbnails"]["high"]["url"]
-    prompt = gemini_verify_and_prompt(thumb,title)
-    clip_path = generate_video(prompt,0)
-    if not clip_path: sys.exit("Video üretilemedi")
-    audio_path = download_audio()
-    final = OUT_DIR / "short_video.mp4"
-    clip = VideoFileClip(clip_path)
-    audio = AudioFileClip(audio_path).subclip(0,clip.duration)
-    clip = clip.set_audio(audio)
-    clip.write_videofile(str(final),fps=24,codec="libx264",audio_codec="aac",logger=None)
-    upload_to_youtube(str(final),title)
-
-if __name__=="__main__":
-    main()
+if __name__ == "__main__":
+    job()
