@@ -3,7 +3,7 @@ name: AI Shorts Creator
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6  * * *'
+    - cron: '0 12 * * *'
 
 jobs:
   run-creator:
@@ -20,8 +20,8 @@ jobs:
 
       - name: Install System Dependencies (FFmpeg & ImageMagick)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=10
+          sudo apt-get install -y --no-install-recommends ffmpeg imagemagick
 
       - name: Install Python Dependencies
         run: |
