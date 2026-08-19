@@ -1,118 +1,154 @@
-import os, sys, logging, tempfile, requests
+import os
+import sys
+import logging
 from pathlib import Path
+
+from moviepy import (
+    TextClip,
+    ColorClip,
+    CompositeVideoClip,
+    VideoFileClip,
+    concatenate_videoclips
+)
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-from moviepy import VideoFileClip, AudioFileClip
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("shorts-global")
+try:
+    from google import genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
-YT_API_KEY = os.environ.get("YT_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-HF_TOKEN = os.environ.get("HF_TOKEN")
-if "TOKEN_JSON" in os.environ and os.environ["TOKEN_JSON"].strip():
-    with open("token.json","w") as f: f.write(os.environ["TOKEN_JSON"])
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("shorts-creator")
 
-OUT_DIR = Path("outputs"); OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="shorts-"))
-
-# --- 1. Shorts Trend ---
-def fetch_global_shorts():
-    youtube = build("youtube","v3",developerKey=YT_API_KEY)
-    res = youtube.search().list(
-        part="snippet",
-        type="video",
-        order="viewCount",
-        maxResults=25
-    ).execute()
-    return res.get("items",[])
-
-def pioneer_video(videos):
-    if not videos:
-        logger.warning("⚠️ Hiç video bulunamadı, dummy trend kullanılacak.")
-        return {"snippet":{"title":"AI generated viral trend"}}
-    videos.sort(key=lambda x: x["snippet"]["publishedAt"])
-    return videos[0]
-
-# --- 2. Gemini Prompt ---
-def gemini_prompt(title):
-    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
-    payload = {
-        "contents":[{"parts":[{"text":f"Generate a cinematic English AI video prompt for a viral YouTube Shorts trend titled: {title}"}]}]
-    }
-    r = requests.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-        headers=headers, json=payload
-    )
-    data = r.json()
-    if "candidates" in data and data["candidates"]:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    else:
-        logger.warning(f"⚠️ Gemini boş yanıt döndü: {data}")
-        return f"A cinematic AI video prompt for trend: {title}"
-
-# --- 3. Video Generation (HF API) ---
-def generate_video(prompt):
-    out_path = TMP_DIR / "clip.mp4"
+# Token dosyasını oluştur
+if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
-        url = "https://api-inference.huggingface.co/models/fffiloni/ZeroScope-T2V"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": prompt}
-        r = requests.post(url, headers=headers, json=payload)
-        if r.status_code == 200:
-            with open(out_path, "wb") as f:
-                f.write(r.content)
-            return str(out_path)
-        else:
-            logger.warning(f"HF API hata: {r.status_code} - {r.text}")
-            return None
+        with open('token.json', 'w') as f:
+            f.write(os.environ['TOKEN_JSON'])
     except Exception as e:
-        logger.error(f"Video üretim hatası: {e}")
-        return None
+        logger.warning(f"token.json yazılamadı: {e}")
 
-# --- 4. Audio ---
-def download_audio():
-    url="https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
-    path=TMP_DIR/"bg.mp3"
-    r=requests.get(url); open(path,"wb").write(r.content)
-    return str(path)
+YT_API_KEY = os.environ.get("YT_API_KEY", None)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
 
-# --- 5. Upload ---
-def upload(video_path,title):
-    creds=Credentials.from_authorized_user_file("token.json")
-    youtube=build("youtube","v3",credentials=creds)
-    body={
-        "snippet":{
-            "title":f"{title} #shorts",
-            "description":"Global viral trend (AI generated)",
-            "categoryId":"22"
-        },
-        "status":{
-            "privacyStatus":"public",
-            "selfDeclaredMadeForKids":False,
-            "containsSyntheticMedia":True   # ✅ AI içerik olduğunu işaretler
-        }
-    }
-    media=MediaFileUpload(video_path,resumable=True,mimetype="video/mp4")
-    youtube.videos().insert(part="snippet,status",body=body,media_body=media).execute()
-    logger.info("✅ Video YouTube'a yüklendi!")
+OUT_DIR = Path("outputs")
+OUT_DIR.mkdir(exist_ok=True)
 
-# --- Main ---
+def get_live_trend_prompts():
+    default_scenes = [
+        "🔥 DÜNYANIN EN İNANILMAZ GERÇEĞİ!",
+        "🚀 TEKNOLOJİ YENİ BİR BOYUTA GEÇTİ!",
+        "💡 BU VİDEOYU SAKIN KAÇIRMA!"
+    ]
+    
+    if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
+        logger.warning("Eksik API/kütüphane. Varsayılan sahneler kullanılıyor.")
+        return default_scenes, "#shorts #viral #trending"
+
+    try:
+        logger.info("🔥 YouTube Shorts trendleri çekiliyor...")
+        youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
+        res = youtube.search().list(q='shorts viral challenge', type='video', videoDuration='short', maxResults=5, part='snippet').execute()
+        
+        titles = [item['snippet']['title'] for item in res.get('items', [])]
+        trend_context = " | ".join(titles)
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        gemini_prompt = (
+            f"YouTube Shorts trendleri: '{trend_context}'. "
+            "Bu trende uygun, izleyicinin dikkatini çekecek Türkçe 3 kısa başlık/sahne metni yaz (her biri max 10 kelime). "
+            "Yanıtı aralarında '---' olacak şekilde ver."
+        )
+        
+        response = client.models.generate_content(model='gemini-3.6-flash', contents=gemini_prompt)
+
+        if response and response.text:
+            generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
+            if len(generated_prompts) >= 3:
+                clean_tag = titles[0][:15].replace(' ', '').replace('#', '')
+                logger.info("✅ Gemini 3.6 Flash ile trend metinleri başarıyla oluşturuldu.")
+                return generated_prompts[:3], f"#shorts #trending #{clean_tag}"
+    except Exception as e:
+        logger.warning(f"Trend çekme hatası: {e}")
+        
+    return default_scenes, "#shorts #viral"
+
+def build_scene_clip(text_content: str, idx: int, duration: float = 4.0):
+    """Hafızada doğrudan 9:16 Shorts klip katmanı oluşturur."""
+    logger.info(f"🎬 Sahne {idx+1} oluşturuluyor: '{text_content[:25]}...'")
+
+    bg_colors = [(20, 20, 35), (35, 15, 25), (15, 30, 35)]
+    bg_color = bg_colors[idx % len(bg_colors)]
+
+    bg_clip = ColorClip(size=(576, 1024), color=bg_color, duration=duration)
+
+    try:
+        txt_clip = TextClip(
+            text=text_content,
+            font_size=36,
+            color='white',
+            method='caption',
+            size=(500, 400)
+        ).with_duration(duration).with_position('center')
+
+        return CompositeVideoClip([bg_clip, txt_clip])
+    except Exception as e:
+        logger.warning(f"Metin oluşturulamadı, varsayılan arka plan kullanılıyor: {e}")
+        return bg_clip
+
 def main():
-    vids = fetch_global_shorts()
-    pioneer = pioneer_video(vids)
-    title = pioneer["snippet"]["title"]
-    prompt = gemini_prompt(title)
-    clip_path = generate_video(prompt)
-    if not clip_path: sys.exit("Video üretilemedi")
-    audio_path = download_audio()
-    final = OUT_DIR/"short_video.mp4"
-    clip = VideoFileClip(clip_path)
-    audio = AudioFileClip(audio_path).subclip(0,clip.duration)
-    clip = clip.set_audio(audio)
-    clip.write_videofile(str(final),fps=24,codec="libx264",audio_codec="aac",logger=None)
-    upload(str(final),title)
+    scenes, video_title = get_live_trend_prompts()
+    video_clips = []
 
-if __name__=="__main__":
+    for idx, scene_text in enumerate(scenes):
+        clip = build_scene_clip(scene_text, idx)
+        video_clips.append(clip)
+
+    if not video_clips:
+        logger.error("❌ Hiçbir video klibi oluşturulamadı. İşlem durduruluyor.")
+        sys.exit(1)
+
+    try:
+        logger.info("🎬 Klipler birleştiriliyor...")
+        final_video = concatenate_videoclips(video_clips, method="compose")
+
+        output_path = OUT_DIR / "short_video.mp4"
+        final_video.write_videofile(
+            str(output_path), 
+            fps=24, 
+            codec="libx264", 
+            audio_codec="aac", 
+            logger=None
+        )
+        logger.info(f"✅ Final video başarıyla üretildi: {output_path}")
+
+        if os.path.exists('token.json'):
+            logger.info("🚀 YouTube Shorts'a yükleniyor...")
+            creds = Credentials.from_authorized_user_file('token.json')
+            youtube = build('youtube', 'v3', credentials=creds)
+
+            body = {
+                'snippet': {
+                    'title': video_title,
+                    'description': f'{video_title} #viral #shorts',
+                    'categoryId': '22'
+                },
+                'status': {
+                    'privacyStatus': 'public',
+                    'selfDeclaredMadeForKids': False,
+                    'containsSyntheticMedia': False
+                }
+            }
+            media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
+            youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
+            logger.info("🎉 Video YouTube Shorts'a başarıyla yüklendi!")
+
+    except Exception as e:
+        logger.error(f"Kurgu/Yükleme hatası: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
     main()
