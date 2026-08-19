@@ -43,9 +43,17 @@ def gemini_prompt(title):
     payload = {
         "contents":[{"parts":[{"text":f"Generate a cinematic English AI video prompt for a viral YouTube Shorts trend titled: {title}"}]}]
     }
-    r = requests.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-                      headers=headers,json=payload)
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    r = requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        headers=headers, json=payload
+    )
+    data = r.json()
+    if "candidates" in data and data["candidates"]:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    else:
+        logger.warning(f"⚠️ Gemini boş yanıt döndü: {data}")
+        return f"A cinematic AI video prompt for trend: {title}"
+
 
 # --- 3. Video Generation (HF Spaces) ---
 def generate_video(prompt):
