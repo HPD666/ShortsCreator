@@ -2,9 +2,8 @@ name: Shorts AutoPilot
 
 on:
   schedule:
-    # Her gün UTC 18:00'de (TSİ 21:00) otomatik çalışır
-    - cron: '0 18 * * *'
-  workflow_dispatch:        # İlk kez manuel başlatabilmek için
+    - cron: '0 18 * * *'   # Her gün UTC 18:00 (TSİ 21:00)
+  workflow_dispatch:        # Manuel başlatma için
 
 jobs:
   autopilot:
