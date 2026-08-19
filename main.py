@@ -77,7 +77,8 @@ def analyze_live_trends_for_t2v():
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
-    response = client.models.generate_content(model='gemini-3.6-flash', contents=gemini_prompt)
+    # ✅ MODEL İSMİ GÜNCELLENDİ (gemini-2.5-flash)
+    response = client.models.generate_content(model='gemini-2.5-flash', contents=gemini_prompt)
 
     if not response or not response.text:
         logger.error("❌ Gemini trend analizinde hata oluştu.")
@@ -104,12 +105,12 @@ def generate_ai_video_clip(prompt: str, idx: int) -> str:
         logger.error("❌ HF_TOKEN ortam değişkeni bulunamadı!")
         return None
 
-    client = InferenceClient(token=HF_TOKEN)
+    client = InferenceClient(token=HF_TOKEN, timeout=120)
 
     models_to_try = [
-        "Lightricks/LTX-Video",
-        "tencent/HunyuanVideo",
-        "damo-vilab/text-to-video-ms-1.7b"
+        "damo-vilab/text-to-video-ms-1.7b",  # Hızlı ve stabil hafif model
+        "Lightricks/LTX-Video",               # Orta ölçekli model
+        "tencent/HunyuanVideo"                # Yüksek kaliteli ağır model
     ]
 
     for model_name in models_to_try:
@@ -214,7 +215,6 @@ def main():
             video_id = upload_response.get('id')
             logger.info(f"🎉 Video YouTube Shorts'a yüklendi! Video ID: {video_id}")
 
-            # 🛑 OTOMATİK BEĞENİ EKLENTİSİ
             if video_id:
                 try:
                     youtube.videos().rate(id=video_id, rating='like').execute()
