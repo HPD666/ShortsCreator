@@ -25,16 +25,15 @@ def fetch_global_shorts():
     res = youtube.search().list(
         part="snippet",
         type="video",
-        videoDuration="short",
-        order="date",
+        order="viewCount",   # 🔄 en çok izlenenleri getir
         maxResults=25
     ).execute()
     return res.get("items",[])
 
 def pioneer_video(videos):
     if not videos:
-        logger.error("❌ Hiç video bulunamadı, YouTube API boş döndü.")
-        return None
+        logger.warning("⚠️ Hiç video bulunamadı, dummy trend kullanılacak.")
+        return {"snippet":{"title":"AI generated viral trend"}}
     videos.sort(key=lambda x: x["snippet"]["publishedAt"])
     return videos[0]
 
@@ -87,8 +86,6 @@ def upload(video_path,title):
 def main():
     vids = fetch_global_shorts()
     pioneer = pioneer_video(vids)
-    if pioneer is None:
-        sys.exit("Trend bulunamadı, çıkış yapılıyor.")
     title = pioneer["snippet"]["title"]
     prompt = gemini_prompt(title)
     clip_path = generate_video(prompt)
