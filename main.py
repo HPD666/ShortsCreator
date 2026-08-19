@@ -120,13 +120,14 @@ def analyze_live_trends_for_t2v():
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
-    # Model ismi güncellendi ve hata önleyici fallback mekanizması eklendi
+    # Doğrudan desteklenen güncel model ve yedek liste
     response = None
-    for model_name in ['gemini-2.5-flash', 'gemini-2.0-flash']:
+    for model_name in ['gemini-3.6-flash', 'gemini-1.5-flash']:
         try:
             logger.info(f"🤖 Requesting Gemini model: {model_name}...")
             response = client.models.generate_content(model=model_name, contents=gemini_prompt)
             if response and response.text:
+                logger.info(f"✅ Gemini yanıtı başarıyla alındı ({model_name}).")
                 break
         except Exception as e:
             logger.warning(f"⚠️ {model_name} ile istek başarısız oldu: {e}")
