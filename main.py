@@ -1,134 +1,144 @@
 import os
 import sys
-import io
-import json
+import time
 import logging
 import tempfile
-import subprocess
 import requests
 from pathlib import Path
-from bs4 import BeautifulSoup
-from PIL import Image
+import subprocess
 
-from google import genai
-from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("3d-trend-bot")
+logger = logging.getLogger("kling-video-bot")
 
-# --- 1. SECRETS HAZIRLIĞI ---
+# --- SECRETS HAZIRLIĞI ---
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     with open('token.json', 'w') as f:
         f.write(os.environ['TOKEN_JSON'])
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
+KLING_API_KEY = os.environ.get("KLING_API_KEY", "")
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="3d-pipeline-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="kling-pipeline-"))
 
 # Sabit 3D Karakter ve Görsel Stil Tanımı
-CHARACTER_3D_STYLE = "3D Pixar style cute robot character, highly detailed 3D render, octane render, 8k vertical 9:16"
+CHARACTER_3D_STYLE = "3D Pixar style cute robot character, realistic 3D camera movement, cinematic lighting, vertical 9:16"
 
-# --- 2. TREND İNDİRME VE GEMINI İLE ANALİZ ---
-def get_trend_and_scenario():
-    logger.info("🔍 Trend YouTube Short indiriliyor ve analiz ediliyor...")
-    audio_path = TMP_DIR / "viral_audio.mp3"
+SCENARIO_PROMPTS = [
+    f"{CHARACTER_3D_STYLE}, character looking at smartphone with shocked expression, camera zoom in",
+    f"{CHARACTER_3D_STYLE}, character doing viral trend dance move, energetic movement, dynamic camera shot",
+    f"{CHARACTER_3D_STYLE}, character celebrating funny finale, colorful confetti, cinematic motion blur"
+]
+
+def generate_kling_video(prompt: str, output_path: Path) -> bool:
+    """Kling AI API kullanarak gerçek video (.mp4) üretir."""
+    logger.info(f"🎬 Kling AI ile video üretiliyor: {prompt[:40]}...")
     
-    short_url = None
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {KLING_API_KEY}"
+    }
+    
+    # 1. Video Üretim Görevi Başlat
+    payload = {
+        "model_name": "kling-v1",
+        "prompt": prompt,
+        "aspect_ratio": "9:16",
+        "duration": "5"
+    }
+    
     try:
-        url = "https://www.youtube.com/feed/trending"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "/shorts/" in href and len(href.split("/shorts/")[1]) > 3:
-                short_url = "https://www.youtube.com" + href.split("&")[0]
-                break
+        response = requests.post("https://api.klingai.com/v1/videos/text2video", json=payload, headers=headers, timeout=30)
+        res_data = response.json()
+        
+        if res_data.get("code") != 0:
+            logger.error(f"Kling API Hata: {res_data}")
+            return False
+            
+        task_id = res_data["data"]["task_id"]
+        logger.info(f"Task oluşturuldu: {task_id}, işleniyor...")
+
+        # 2. Video Hazır Olana Kadar Bekle (Polling)
+        for _ in range(30):
+            time.sleep(10)
+            status_res = requests.get(f"https://api.klingai.com/v1/videos/text2video/{task_id}", headers=headers, timeout=15)
+            status_data = status_res.json()
+            
+            task_status = status_data.get("data", {}).get("task_status")
+            if task_status == "succeed":
+                video_url = status_data["data"]["task_result"]["videos"][0]["url"]
+                video_data = requests.get(video_url, timeout=60).content
+                with open(output_path, "wb") as f:
+                    f.write(video_data)
+                return True
+            elif task_status == "failed":
+                logger.error("Kling Video üretimi başarısız oldu.")
+                return False
+                
     except Exception as e:
-        logger.warning(f"Trend URL çekilemedi: {e}")
+        logger.error(f"Kling API İstek Hatası: {e}")
+        
+    return False
 
-    # Fallback varsayılan video URL
-    if not short_url:
-        short_url = "https://www.youtube.com/shorts/513e8_W4428"
-
-    # Sesi İndir (Çökme Korumalı)
+def download_trend_audio() -> str:
+    audio_path = TMP_DIR / "viral_audio.mp3"
     try:
+        short_url = "https://www.youtube.com/shorts/513e8_W4428"
         cmd = ["yt-dlp", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", str(audio_path), short_url]
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except Exception as e:
-        logger.warning(f"yt-dlp indirme yapamadı, yedek ses kullanılıyor: {e}")
+    except Exception:
         res = requests.get("https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3")
         with open(audio_path, "wb") as f:
             f.write(res.content)
+    return str(audio_path)
 
-    # Gemini ile 3D Senaryo Üretimi
-    scenario_prompts = [
-        f"{CHARACTER_3D_STYLE}, starting pose of viral trend, holding item, dynamic 3D camera shot",
-        f"{CHARACTER_3D_STYLE}, performing the viral action, shocked expression, close up 3D render",
-        f"{CHARACTER_3D_STYLE}, chaotic funny trend finale, 3D cinematic explosion perspective"
-    ]
-
-    if client:
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=f"Break down the latest viral short trend ({short_url}) into 3 sequential image prompts for a 3D animated character. Keep it simple."
-            )
-            logger.info(f"Gemini Trend Analizi: {response.text[:100]}...")
-        except Exception as e:
-            logger.warning(f"Gemini API fallback: {e}")
-
-    return str(audio_path), scenario_prompts
-
-# --- 3. 3D SAHNE RENDER VE MONTAJ ---
-def build_3d_video(audio_path, prompts):
-    logger.info("🎨 3D sahneler oluşturuluyor...")
-    clips = []
-    
-    for idx, prompt in enumerate(prompts):
-        encoded = requests.utils.quote(prompt)
-        img_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed=42"
-        
-        img_path = TMP_DIR / f"frame_3d_{idx}.jpg"
-        res = requests.get(img_url, timeout=25)
-        with open(img_path, "wb") as f:
-            f.write(res.content)
-
-        clip = ImageClip(str(img_path)).with_duration(3.0)
-        clips.append(clip)
-
-    video = concatenate_videoclips(clips, method="compose")
-    audio = AudioFileClip(audio_path)
-    
-    if audio.duration > video.duration:
-        audio = audio.subclipped(0, video.duration)
-        
-    final = video.with_audio(audio)
-    output_path = OUT_DIR / "short_video.mp4"
-    final.write_videofile(str(output_path), fps=24, codec="libx264", audio_codec="aac", logger=None)
-    return str(output_path)
-
-# --- 4. YÜKLEME ---
 def main():
-    audio_path, prompts = get_trend_and_scenario()
-    video_path = build_3d_video(audio_path, prompts)
+    if not KLING_API_KEY:
+        logger.error("KLING_API_KEY bulunamadı! Secrets kısmına ekleyin.")
+        sys.exit(1)
 
+    audio_path = download_trend_audio()
+    video_clips = []
+
+    # Her senaryo adımı için Kling AI ile ayrı video üret
+    for idx, prompt in enumerate(SCENARIO_PROMPTS):
+        clip_path = TMP_DIR / f"kling_clip_{idx}.mp4"
+        success = generate_kling_video(prompt, clip_path)
+        
+        if success and clip_path.exists():
+            video_clips.append(VideoFileClip(str(clip_path)))
+
+    if not video_clips:
+        logger.error("Hiçbir video klibi oluşturulamadı.")
+        sys.exit(1)
+
+    # Videoları uç uca birleştir ve sesi ekle
+    final_video = concatenate_videoclips(video_clips, method="compose")
+    audio_clip = AudioFileClip(audio_path)
+    
+    if audio_clip.duration > final_video.duration:
+        audio_clip = audio_clip.subclipped(0, final_video.duration)
+        
+    final_video = final_video.with_audio(audio_clip)
+    output_path = OUT_DIR / "short_video.mp4"
+    final_video.write_videofile(str(output_path), fps=24, codec="libx264", audio_codec="aac", logger=None)
+
+    # YouTube Yükleme
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json')
         youtube = build('youtube', 'v3', credentials=creds)
 
         body = {
-            'snippet': {'title': '#trend #shorts #viral #3d', 'description': '#shorts #viral #3d', 'categoryId': '22'},
+            'snippet': {'title': '#trend #shorts #kling #3d', 'description': '#shorts #viral #3d', 'categoryId': '22'},
             'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
         }
-        media = MediaFileUpload(video_path, chunksize=-1, resumable=True, mimetype='video/mp4')
+        media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
         youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-        logger.info("🎉 3D Trend videosu YouTube'a yüklendi!")
+        logger.info("🎉 Kling AI ile üretilen 3D Trend videosu YouTube'a yüklendi!")
 
 if __name__ == "__main__":
     main()
