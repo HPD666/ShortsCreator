@@ -3,7 +3,7 @@ name: AI Shorts Creator
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6  * * *'
+    - cron: '0 12 * * *'
 
 jobs:
   run-creator:
@@ -17,17 +17,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
-      - name: Fast System Dependencies Setup
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo rm -rf /var/lib/apt/lists/*
-          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
-          echo 'Acquire::http::Timeout "5";' | sudo tee /etc/apt/apt.conf.d/99timeout
-          echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
-          sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends ffmpeg imagemagick
 
       - name: Install Python Dependencies
         run: |
