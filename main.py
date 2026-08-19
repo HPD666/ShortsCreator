@@ -55,8 +55,8 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. HIGH-QUALITY REALISTIC GPU RENDERER
-@app.cls(gpu="a10g", timeout=600, retries=0)
+# 2. HIGH-QUALITY REALISTIC GPU RENDERER (RAM BOOSTED TO 32GB TO PREVENT OOM CRASH-LOOP)
+@app.cls(gpu="a10g", cpu=4.0, memory=32768, timeout=600, retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
