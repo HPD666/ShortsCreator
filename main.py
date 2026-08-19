@@ -16,7 +16,7 @@ from googleapiclient.http import MediaFileUpload
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("hf-free-video-bot")
 
-# Secrets ve YouTube Token Kontrolü
+# GitHub Secrets uzerinden gelen TOKEN_JSON'i dosyaya yaz
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     with open('token.json', 'w') as f:
         f.write(os.environ['TOKEN_JSON'])
@@ -25,7 +25,7 @@ OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="hf-pipeline-"))
 
-# Sabit 3D Karakter Stil Tanımı
+# Sabit 3D Karakter Stil Tanimi
 CHARACTER_3D_STYLE = "3D Pixar style cute robot character, realistic 3D render, vertical 9:16, dynamic movement"
 
 PROMPTS = [
@@ -35,10 +35,10 @@ PROMPTS = [
 ]
 
 def generate_video_from_hf(prompt: str, output_path: Path) -> bool:
-    """Hugging Face ZeroGPU üzerindeki açık kaynak video modeliyle ücretsiz .mp4 üretir."""
-    logger.info(f"🎬 Open-Source HF Space ile video üretiliyor: {prompt[:40]}...")
+    """Hugging Face ZeroGPU uzerindeki acik kaynak video modeliyle ucretsiz .mp4 uretir."""
+    logger.info(f"🎬 Açık kaynak model ile video üretiliyor: {prompt[:40]}...")
     
-    # 1. Öncelikli Model (LTX-Video)
+    # 1. Oncelikli Model (LTX-Video)
     try:
         client = Client("Lightricks/LTX-Video")
         result = client.predict(
@@ -52,7 +52,7 @@ def generate_video_from_hf(prompt: str, output_path: Path) -> bool:
                 dst.write(src.read())
             return True
     except Exception as e:
-        logger.warning(f"LTX-Video yoğun, yedek açık kaynak model deneniyor: {e}")
+        logger.warning(f"LTX-Video meşgul, yedek model deneniyor: {e}")
 
     # 2. Yedek Model (CogVideoX)
     try:
@@ -66,7 +66,7 @@ def generate_video_from_hf(prompt: str, output_path: Path) -> bool:
                 dst.write(src.read())
             return True
     except Exception as ex:
-        logger.error(f"Hugging Face Video Üretim Hatası: {ex}")
+        logger.error(f"Video üretimi başarısız oldu: {ex}")
 
     return False
 
@@ -93,10 +93,10 @@ def main():
             video_clips.append(VideoFileClip(str(clip_path)))
 
     if not video_clips:
-        logger.error("Video klipleri oluşturulamadı.")
+        logger.error("Hiçbir video klibi oluşturulamadı.")
         sys.exit(1)
 
-    # Hareketli video kliplerini birleştir ve sesi ekle
+    # Klipleri birlestir ve ses ekle
     final_video = concatenate_videoclips(video_clips, method="compose")
     audio_clip = AudioFileClip(audio_path)
     
@@ -107,18 +107,26 @@ def main():
     output_path = OUT_DIR / "short_video.mp4"
     final_video.write_videofile(str(output_path), fps=24, codec="libx264", audio_codec="aac", logger=None)
 
-    # YouTube Otomatik Yükleme
+    # YouTube Otomatik Yukleme (Sentetik/Yapay Zeka Etiketi Dahil)
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json')
         youtube = build('youtube', 'v3', credentials=creds)
 
         body = {
-            'snippet': {'title': '#shorts #3d #viral #trending', 'description': '#shorts #3d #viral', 'categoryId': '22'},
-            'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
+            'snippet': {
+                'title': '#shorts #3d #viral #trending',
+                'description': '#shorts #3d #viral',
+                'categoryId': '22'
+            },
+            'status': {
+                'privacyStatus': 'public',
+                'selfDeclaredMadeForKids': False,
+                'containsSyntheticMedia': True  # Yapay Zeka etiketini otomatik işaretler
+            }
         }
         media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
         youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-        logger.info("🎉 HF Açık Kaynak Video Altyapısı ile üretilen Short yüklendi!")
+        logger.info("🎉 Video başarıyla yüklendi ve Yapay Zeka etiketi otomatik eklendi!")
 
 if __name__ == "__main__":
     main()
