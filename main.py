@@ -68,7 +68,6 @@ def analyze_live_trends_for_t2v():
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # GERÇEKÇİ (PHOTOREALISTIC) + TREND EYLEMİ
     gemini_prompt = (
         f"Analyze these trending YouTube Shorts titles: '{trend_context}'. "
         "Identify the core trending visual action or concept (e.g., flying, jumping, superhero motion, viral challenge). "
@@ -211,7 +210,6 @@ def main():
             }
             media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
             
-            # Video yükleme işlemi
             upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
             video_id = upload_response.get('id')
             logger.info(f"🎉 Video YouTube Shorts'a yüklendi! Video ID: {video_id}")
@@ -222,7 +220,7 @@ def main():
                     youtube.videos().rate(id=video_id, rating='like').execute()
                     logger.info("👍 Video otomatik olarak beğenildi!")
                 except Exception as like_error:
-                    logger.warning(f"⚠️ Video beğenilemedi (Yetki eksikliği veya kota uyarısı): {like_error}")
+                    logger.warning(f"⚠️ Video beğenilemedi: {like_error}")
 
     except Exception as e:
         logger.error(f"Render/Yükleme hatası: {e}")
