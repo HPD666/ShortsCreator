@@ -84,7 +84,9 @@ def analyze_live_trends_for_t2v():
         logger.error("❌ Yetersiz sayıda prompt üretildi.")
         sys.exit(1)
 
-    return parsed_data[:3], f"Trending Now #{titles[0].split()[0].replace('#', '')} #shorts #ai"
+    
+return parsed_data[:3], "#trend #viral #shorts #ai"
+
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
     logger.info(f"🤖 Generating AI Video {idx+1} with HF InferenceClient: '{prompt[:40]}...'")
