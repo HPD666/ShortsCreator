@@ -1,32 +1,38 @@
-name: AI Shorts Creator
+name: Daily AI Video Generator
 
 on:
-  workflow_dispatch:
   schedule:
+    # Her gün saat 12:00 UTC'de otomatik çalışır
     - cron: '0 12 * * *'
+  # İstenildiği zaman GitHub panelinden elle başlatma seçeneği
+  workflow_dispatch:
 
 jobs:
-  run-creator:
+  generate-and-run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
-      - name: Install Python Dependencies
+      - name: Install Dependencies & Authenticate Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           python -m pip install --upgrade pip
-          pip install "moviepy>=2.0.0" imageio-ffmpeg huggingface_hub google-genai google-api-python-client google-auth-oauthlib gradio_client
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install modal
+          modal token set --token-id $MODAL_TOKEN_ID --token-secret $MODAL_TOKEN_SECRET
 
       - name: Run Main Script
         env:
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-        run: python main.py
+        run: |
+          python main.py
