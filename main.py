@@ -1,15 +1,13 @@
-import os, sys, logging, tempfile, requests, json
+import os, sys, logging, tempfile, requests
 from pathlib import Path
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-from moviepy import VideoFileClip, AudioFileClip   # ✅ güncel import
-from gradio_client import Client
+from moviepy import VideoFileClip, AudioFileClip
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("shorts-global")
 
-# Secrets
 YT_API_KEY = os.environ.get("YT_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -19,13 +17,13 @@ if "TOKEN_JSON" in os.environ and os.environ["TOKEN_JSON"].strip():
 OUT_DIR = Path("outputs"); OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="shorts-"))
 
-# --- 1. Global Shorts Trend Discovery ---
+# --- 1. Shorts Trend ---
 def fetch_global_shorts():
     youtube = build("youtube","v3",developerKey=YT_API_KEY)
     res = youtube.search().list(
         part="snippet",
         type="video",
-        order="viewCount",   # 🔄 en çok izlenenleri getir
+        order="viewCount",
         maxResults=25
     ).execute()
     return res.get("items",[])
@@ -54,21 +52,24 @@ def gemini_prompt(title):
         logger.warning(f"⚠️ Gemini boş yanıt döndü: {data}")
         return f"A cinematic AI video prompt for trend: {title}"
 
-# --- 3. Video Generation (HF Spaces) ---
+# --- 3. Video Generation (HF API) ---
 def generate_video(prompt):
-    spaces = ["artificialguybr/CogVideoX-5B-Text2Video","fffiloni/ZeroScope-T2V"]
     out_path = TMP_DIR / "clip.mp4"
-    for space in spaces:
-        try:
-            client = Client(space,hf_token=HF_TOKEN)
-            job = client.submit(prompt=prompt,api_name="/predict")
-            result = job.result(timeout=180)
-            if result and os.path.exists(str(result)):
-                with open(result,"rb") as src, open(out_path,"wb") as dst: dst.write(src.read())
-                return str(out_path)
-        except Exception as e:
-            logger.warning(f"{space} failed: {e}")
-    return None
+    try:
+        url = "https://api-inference.huggingface.co/models/fffiloni/ZeroScope-T2V"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {"inputs": prompt}
+        r = requests.post(url, headers=headers, json=payload)
+        if r.status_code == 200:
+            with open(out_path, "wb") as f:
+                f.write(r.content)
+            return str(out_path)
+        else:
+            logger.warning(f"HF API hata: {r.status_code} - {r.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Video üretim hatası: {e}")
+        return None
 
 # --- 4. Audio ---
 def download_audio():
@@ -82,8 +83,16 @@ def upload(video_path,title):
     creds=Credentials.from_authorized_user_file("token.json")
     youtube=build("youtube","v3",credentials=creds)
     body={
-        "snippet":{"title":f"{title} #shorts","description":"Global viral trend","categoryId":"22"},
-        "status":{"privacyStatus":"public","selfDeclaredMadeForKids":False,"containsSyntheticMedia":True}
+        "snippet":{
+            "title":f"{title} #shorts",
+            "description":"Global viral trend (AI generated)",
+            "categoryId":"22"
+        },
+        "status":{
+            "privacyStatus":"public",
+            "selfDeclaredMadeForKids":False,
+            "containsSyntheticMedia":True   # ✅ AI içerik olduğunu işaretler
+        }
     }
     media=MediaFileUpload(video_path,resumable=True,mimetype="video/mp4")
     youtube.videos().insert(part="snippet,status",body=body,media_body=media).execute()
