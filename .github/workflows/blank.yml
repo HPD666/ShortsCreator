@@ -1,4 +1,4 @@
-name: YouTube Otomatik Dans Akımı Yukleme
+name: YouTube Otomatik 3D Trend Yukleme
 
 on:
   schedule:
@@ -23,14 +23,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg libsndfile1
 
-      - name: Python Kütüphaneleri
+      - name: Python Kütüphaneleri Kurulumu
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp requests beautifulsoup4 moviepy pillow mediapipe numpy opencv-python librosa soundfile tenacity google-api-python-client google-auth-oauthlib google-auth-httplib2
+          pip install yt-dlp requests beautifulsoup4 moviepy pillow numpy librosa soundfile google-generativeai google-api-python-client google-auth-oauthlib google-auth-httplib2
 
       - name: Botu Çalıştır ve YouTube'a Yükle
         env:
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
           CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
