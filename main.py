@@ -12,7 +12,13 @@ from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-from google import genai
+
+# Gemini SDK Güvenli Yükleme
+try:
+    from google import genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("shorts-creator")
@@ -42,8 +48,8 @@ def get_live_trend_prompts():
         "3D Pixar style cute robot character, realistic 3D render, vertical 9:16, celebrating with colorful confetti"
     ]
     
-    if not YT_API_KEY or not GEMINI_API_KEY:
-        logger.warning("YT_API_KEY veya GEMINI_API_KEY bulunamadı, varsayılan 3D konsept kullanılıyor.")
+    if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
+        logger.warning("YT_API_KEY, GEMINI_API_KEY veya google-genai kütüphanesi eksik. Varsayılan 3D konsept kullanılıyor.")
         return default_prompts, "#shorts #3d #viral #trending"
 
     try:
@@ -66,7 +72,8 @@ def get_live_trend_prompts():
         generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
         
         if len(generated_prompts) >= 3:
-            return generated_prompts[:3], f"#shorts #trending #{titles[0][:15].replace(' ', '')}"
+            clean_tag = titles[0][:15].replace(' ', '').replace('#', '')
+            return generated_prompts[:3], f"#shorts #trending #{clean_tag}"
     except Exception as e:
         logger.warning(f"Trend çekme hatası: {e}")
         
@@ -77,11 +84,9 @@ def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
     """Aktif T2V modellerini kullanarak gerçek MP4 videosu üretir."""
     logger.info(f"🎬 Klip {idx+1} için T2V üretimi başlatıldı...")
 
-    # Güncel çalışan Text-To-Video Gradio alanları
     spaces_config = [
-        {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
         {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"},
-        {"space": "PKU-YuanGroup/Open-Sora-Plan-v1.2.0", "api_name": "/predict"}
+        {"space": "fffiloni/ZeroScope-T2V", "api_name": "/predict"}
     ]
 
     for config in spaces_config:
@@ -102,7 +107,7 @@ def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
                 elif isinstance(item, dict) and "video" in item:
                     video_file = item["video"]
 
-            if video_file and os.path.exists(video_file) and video_file.endswith('.mp4'):
+            if video_file and os.path.exists(video_file) and str(video_file).endswith('.mp4'):
                 shutil.copy(video_file, str(output_path))
                 logger.info(f"✅ Klip {idx+1} başarıyla T2V olarak üretildi.")
                 return True
@@ -138,17 +143,6 @@ def main():
         if success and clip_path.exists():
             try:
                 clip = VideoFileClip(str(clip_path))
-                
-                # Yamukluğu Önleme: 9:16 (1080x1920) Dikey Formata Çözünürlük Sabitleme
-                w, h = clip.size
-                target_ratio = 1080 / 1920
-                current_ratio = w / h
-                
-                if current_ratio != target_ratio:
-                    # En-boy oranını bozmadan ortalayarak kırpma ve boyutlandırma
-                    clip = clip.cropped(width=min(w, int(h * target_ratio)), height=min(h, int(w / target_ratio)))
-                    clip = clip.resized((1080, 1920))
-                
                 video_clips.append(clip)
             except Exception as e:
                 logger.warning(f"Klip işlenemedi: {e}")
@@ -175,7 +169,6 @@ def main():
             fps=24, 
             codec="libx264", 
             audio_codec="aac", 
-            preset="fast",
             logger=None
         )
 
