@@ -55,30 +55,39 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. MODAL GPU CLASS WITH EXPLICIT STEP LOGGING
-@app.cls(gpu="a10g", timeout=900)
+# 2. MODAL GPU CLASS WITH EXPLICIT STEP LOGGING & MEMORY FIXES
+@app.cls(gpu="a10g", timeout=900, max_retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
         import torch
         from diffusers import LTXPipeline
+
         print("⚡ [GPU Container] Starting LTX-Video model load...", flush=True)
+        
+        # Load weights directly to CPU RAM first (do NOT use .to("cuda"))
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
             torch_dtype=torch.bfloat16
-        ).to("cuda")
+        )
         
-        # Memory optimization settings
+        # CPU offloading manages GPU VRAM per layer automatically
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
             
-        print("✅ [GPU Container] Model successfully loaded into VRAM!", flush=True)
+        print("✅ [GPU Container] Model successfully loaded with CPU offloading!", flush=True)
 
     @modal.method()
     def render(self, prompt: str) -> bytes:
+        import gc
+        import torch
         import tempfile
         from diffusers.utils import export_to_video
+
+        # Clean VRAM before running
+        gc.collect()
+        torch.cuda.empty_cache()
 
         print(f"🎬 [GPU Container] Rendering video prompt: '{prompt[:50]}...'", flush=True)
         video_frames = self.pipe(
@@ -93,8 +102,13 @@ class VideoGenerator:
             export_to_video(video_frames, tmp.name, fps=8)
             with open(tmp.name, "rb") as f:
                 data = f.read()
-            print("✅ [GPU Container] Frame rendering complete!", flush=True)
-            return data
+
+        # Clean VRAM immediately so subsequent videos do not crash
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        print("✅ [GPU Container] Frame rendering complete!", flush=True)
+        return data
 
 
 # OAuth Token Management
