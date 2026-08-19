@@ -55,7 +55,7 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. OPTIMIZED MODAL GPU CLASS
+# 2. HIGH-QUALITY REALISTIC GPU RENDERER
 @app.cls(gpu="a10g", timeout=600, retries=0)
 class VideoGenerator:
     @modal.enter()
@@ -63,20 +63,18 @@ class VideoGenerator:
         import torch
         from diffusers import LTXPipeline
 
-        print("⚡ [GPU Container] Starting LTX-Video model load...", flush=True)
+        print("⚡ [GPU Container] Loading photorealistic LTX-Video model...", flush=True)
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
             torch_dtype=torch.bfloat16
         )
         
-        # Memory & Speed Optimizations
+        # Enable optimal memory offloading for A10G
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
-        if hasattr(self.pipe, "vae") and hasattr(self.pipe.vae, "enable_tiling"):
-            self.pipe.vae.enable_tiling()
             
-        print("✅ [GPU Container] Model successfully loaded and optimized!", flush=True)
+        print("✅ [GPU Container] Model ready for rendering!", flush=True)
 
     @modal.method()
     def render(self, prompt: str) -> bytes:
@@ -88,15 +86,16 @@ class VideoGenerator:
         gc.collect()
         torch.cuda.empty_cache()
 
-        print(f"🎬 [GPU Container] Rendering video prompt: '{prompt[:50]}...'", flush=True)
+        print(f"🎬 [GPU Container] Rendering prompt: '{prompt[:50]}...'", flush=True)
         
-        # Ultra-fast params: 12 steps, 17 frames, 384x384 resolution
+        # Full photorealistic 512x512 resolution at 20 inference steps
         video_frames = self.pipe(
             prompt=prompt,
-            num_inference_steps=12,
-            height=384,
-            width=384,
-            num_frames=17,
+            num_inference_steps=20,
+            height=512,
+            width=512,
+            num_frames=25,
+            guidance_scale=3.0,
         ).frames[0]
 
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -172,7 +171,7 @@ def analyze_live_trends_for_t2v():
             except Exception as e:
                 logger.warning(f"⚠️ {model_name} (Attempt {attempt + 1}) failed: {e}")
                 if "429" in str(e):
-                    logger.info("⏳ Kota aşımı nedeniyle 35 saniye bekleniyor...")
+                    logger.info("⏳ Quota sleep: waiting 35 seconds...")
                     time.sleep(35)
                 else:
                     time.sleep(3)
@@ -202,54 +201,53 @@ def main():
     scenes, video_title = analyze_live_trends_for_t2v()
     video_clips = []
 
-    logger.info("🚀 Modal GPU session launching...")
+    logger.info("🚀 Modal GPU session launching parallel workers...")
     with app.run():
         generator = VideoGenerator()
-        for idx, scene in enumerate(scenes):
-            logger.info(f"🤖 Generating AI Video {idx+1}/3 on Modal GPU...")
+        prompts = [scene["prompt"] for scene in scenes]
+        
+        # Parallel execution: All 3 videos render simultaneously on separate GPU containers
+        logger.info("⚡ Rendering 3 videos simultaneously on Modal...")
+        rendered_bytes = list(generator.render.map(prompts))
+
+        for idx, (scene, video_bytes) in enumerate(zip(scenes, rendered_bytes)):
             output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
+            with open(output_path, "wb") as f:
+                f.write(video_bytes)
 
-            try:
-                video_bytes = generator.render.remote(scene["prompt"])
-                with open(output_path, "wb") as f:
-                    f.write(video_bytes)
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                logger.info(f"✅ AI Video Clip {idx+1} rendered and received!")
+                clip = VideoFileClip(str(output_path))
 
-                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    logger.info(f"✅ AI Video Clip {idx+1} rendered and received locally!")
-                    clip = VideoFileClip(str(output_path))
+                # 🎬 9:16 VERTICAL CROP
+                clip_resized = clip.resized(height=1920)
+                vertical_clip = clip_resized.cropped(
+                    x_center=clip_resized.w / 2, 
+                    width=1080
+                )
 
-                    # 🎬 9:16 VERTICAL CROP
-                    clip_resized = clip.resized(height=1920)
-                    vertical_clip = clip_resized.cropped(
-                        x_center=clip_resized.w / 2, 
-                        width=1080
-                    )
+                # 📝 TEXT OVERLAY
+                txt_clip = TextClip(
+                    text=scene["text"],
+                    font_size=55,
+                    color='yellow',
+                    stroke_color='black',
+                    stroke_width=3,
+                    method='caption',
+                    size=(900, 300)
+                ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-                    # 📝 TEXT OVERLAY
-                    txt_clip = TextClip(
-                        text=scene["text"],
-                        font_size=55,
-                        color='yellow',
-                        stroke_color='black',
-                        stroke_width=3,
-                        method='caption',
-                        size=(900, 300)
-                    ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
+                # 🔊 TTS AUDIO
+                tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
+                tts = gTTS(text=scene["text"], lang='en')
+                tts.save(str(tts_path))
 
-                    # 🔊 TTS AUDIO
-                    tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
-                    tts = gTTS(text=scene["text"], lang='en')
-                    tts.save(str(tts_path))
+                audio_clip = AudioFileClip(str(tts_path))
+                if audio_clip.duration > vertical_clip.duration:
+                    audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
 
-                    audio_clip = AudioFileClip(str(tts_path))
-                    if audio_clip.duration > vertical_clip.duration:
-                        audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
-
-                    composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
-                    video_clips.append(composite)
-
-            except Exception as e:
-                logger.error(f"❌ Error processing clip {idx+1}: {e}")
+                composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
+                video_clips.append(composite)
 
     if not video_clips:
         logger.error("❌ No AI video clips were generated. Aborting execution.")
@@ -292,7 +290,6 @@ def main():
             video_id = upload_response.get('id')
             logger.info(f"🎉 Successfully uploaded! Video ID: {video_id}")
 
-            # 🚀 AUTO-LIKE UPLOADED VIDEO
             if video_id:
                 try:
                     youtube.videos().rate(id=video_id, rating='like').execute()
