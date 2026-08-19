@@ -32,6 +32,9 @@ def fetch_global_shorts():
     return res.get("items",[])
 
 def pioneer_video(videos):
+    if not videos:
+        logger.error("❌ Hiç video bulunamadı, YouTube API boş döndü.")
+        return None
     videos.sort(key=lambda x: x["snippet"]["publishedAt"])
     return videos[0]
 
@@ -82,17 +85,19 @@ def upload(video_path,title):
 
 # --- Main ---
 def main():
-    vids=fetch_global_shorts()
-    pioneer=pioneer_video(vids)
-    title=pioneer["snippet"]["title"]
-    prompt=gemini_prompt(title)
-    clip_path=generate_video(prompt)
+    vids = fetch_global_shorts()
+    pioneer = pioneer_video(vids)
+    if pioneer is None:
+        sys.exit("Trend bulunamadı, çıkış yapılıyor.")
+    title = pioneer["snippet"]["title"]
+    prompt = gemini_prompt(title)
+    clip_path = generate_video(prompt)
     if not clip_path: sys.exit("Video üretilemedi")
-    audio_path=download_audio()
-    final=OUT_DIR/"short_video.mp4"
-    clip=VideoFileClip(clip_path)
-    audio=AudioFileClip(audio_path).subclip(0,clip.duration)
-    clip=clip.set_audio(audio)
+    audio_path = download_audio()
+    final = OUT_DIR/"short_video.mp4"
+    clip = VideoFileClip(clip_path)
+    audio = AudioFileClip(audio_path).subclip(0,clip.duration)
+    clip = clip.set_audio(audio)
     clip.write_videofile(str(final),fps=24,codec="libx264",audio_codec="aac",logger=None)
     upload(str(final),title)
 
