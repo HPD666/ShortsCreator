@@ -32,7 +32,13 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("ai-t2v-creator")
 
-# 1. MODAL GPU ORTAMI KURULUMU
+
+# 1. MODAL GPU ORTAMI VE MODEL ÖN YÜKLEME KURULUMU
+def download_model_weights():
+    import torch
+    from diffusers import LTXPipeline
+    LTXPipeline.from_pretrained("Lightricks/LTX-Video", torch_dtype=torch.bfloat16)
+
 modal_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -43,12 +49,14 @@ modal_image = (
         "sentencepiece",
         "imageio-ffmpeg"
     )
+    .run_function(download_model_weights)
 )
+
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
 # 2. MODAL GPU BULUTUNDA ÇALIŞACAK UZAK VİDEO RENDER FONKSİYONU
-@app.function(gpu="a10g", timeout=600)
+@app.function(gpu="a10g", timeout=900)
 def render_modal_video(prompt: str) -> bytes:
     import torch
     from diffusers import LTXPipeline
@@ -62,7 +70,7 @@ def render_modal_video(prompt: str) -> bytes:
 
     video_frames = pipe(
         prompt=prompt,
-        num_inference_steps=30,
+        num_inference_steps=25,
         height=512,
         width=512,
         num_frames=25,
@@ -74,6 +82,7 @@ def render_modal_video(prompt: str) -> bytes:
             return f.read()
 
 
+# OAuth Token Yönetimi
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
         with open('token.json', 'w') as f:
@@ -120,7 +129,6 @@ def analyze_live_trends_for_t2v():
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
-    # Doğrudan desteklenen güncel model ve yedek liste
     response = None
     for model_name in ['gemini-3.6-flash', 'gemini-1.5-flash']:
         try:
@@ -150,70 +158,58 @@ def analyze_live_trends_for_t2v():
     return parsed_data[:3], "#trend #viral #shorts"
 
 
-def generate_ai_video_clip(prompt: str, idx: int) -> str:
-    logger.info(f"🤖 Generating AI Video {idx+1} on Modal GPU: '{prompt[:40]}...'")
-    output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
-
-    try:
-        with app.run():
-            video_bytes = render_modal_video.remote(prompt)
-            
-        with open(output_path, "wb") as f:
-            f.write(video_bytes)
-
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            logger.info(f"✅ AI Video Clip {idx+1} successfully rendered on Modal GPU!")
-            return str(output_path)
-    except Exception as e:
-        logger.error(f"❌ Modal T2V generation failed for clip {idx+1}: {e}")
-
-    return None
-
-
 def main():
     scenes, video_title = analyze_live_trends_for_t2v()
     video_clips = []
 
-    for idx, scene in enumerate(scenes):
-        ai_video_file = generate_ai_video_clip(scene["prompt"], idx)
-        
-        if ai_video_file and os.path.exists(ai_video_file):
+    logger.info("🚀 Modal GPU oturumu başlatılıyor...")
+    with app.run():
+        for idx, scene in enumerate(scenes):
+            logger.info(f"🤖 Generating AI Video {idx+1}/3 on Modal GPU: '{scene['prompt'][:40]}...'")
+            output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
+
             try:
-                clip = VideoFileClip(ai_video_file)
+                video_bytes = render_modal_video.remote(scene["prompt"])
+                with open(output_path, "wb") as f:
+                    f.write(video_bytes)
 
-                # 🎬 VİDEOYU DIKEY (9:16 SHORTS) FORMATINA GEÇİRME
-                clip_resized = clip.resized(height=1920)
-                vertical_clip = clip_resized.cropped(
-                    x_center=clip_resized.w / 2, 
-                    width=1080
-                )
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    logger.info(f"✅ AI Video Clip {idx+1} Modal üzerinde hazırlandı!")
+                    clip = VideoFileClip(str(output_path))
 
-                # 📝 YAZI KAPLAMASI (TEXT OVERLAY)
-                txt_clip = TextClip(
-                    text=scene["text"],
-                    font_size=55,
-                    color='yellow',
-                    stroke_color='black',
-                    stroke_width=3,
-                    method='caption',
-                    size=(900, 300)
-                ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
+                    # 🎬 VİDEOYU DIKEY (9:16 SHORTS) FORMATINA GEÇİRME
+                    clip_resized = clip.resized(height=1920)
+                    vertical_clip = clip_resized.cropped(
+                        x_center=clip_resized.w / 2, 
+                        width=1080
+                    )
 
-                # 🔊 SES SESLENDİRMESİ (TTS AUDIO)
-                tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
-                tts = gTTS(text=scene["text"], lang='en')
-                tts.save(str(tts_path))
+                    # 📝 YAZI KAPLAMASI (TEXT OVERLAY)
+                    txt_clip = TextClip(
+                        text=scene["text"],
+                        font_size=55,
+                        color='yellow',
+                        stroke_color='black',
+                        stroke_width=3,
+                        method='caption',
+                        size=(900, 300)
+                    ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-                audio_clip = AudioFileClip(str(tts_path))
-                if audio_clip.duration > vertical_clip.duration:
-                    audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
+                    # 🔊 SES SESLENDİRMESİ (TTS AUDIO)
+                    tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
+                    tts = gTTS(text=scene["text"], lang='en')
+                    tts.save(str(tts_path))
 
-                # Video + Yazı + Yapay Zeka Sesini Birleştirme
-                composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
-                video_clips.append(composite)
+                    audio_clip = AudioFileClip(str(tts_path))
+                    if audio_clip.duration > vertical_clip.duration:
+                        audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
+
+                    # Video + Yazı + Ses Birleştirme
+                    composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
+                    video_clips.append(composite)
 
             except Exception as e:
-                logger.warning(f"Klip ve ses işleme hatası ({idx+1}): {e}")
+                logger.error(f"❌ Klip {idx+1} işlenirken hata oluştu: {e}")
 
     if not video_clips:
         logger.error("❌ Hiçbir AI video klibi oluşturulamadı. İşlem durduruluyor.")
@@ -256,6 +252,7 @@ def main():
             video_id = upload_response.get('id')
             logger.info(f"🎉 Video YouTube Shorts'a yüklendi! Video ID: {video_id}")
 
+            # 🚀 OTOMATİK BEĞENME (LIKE)
             if video_id:
                 try:
                     youtube.videos().rate(id=video_id, rating='like').execute()
