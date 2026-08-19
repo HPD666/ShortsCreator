@@ -55,7 +55,7 @@ def analyze_live_trends_for_t2v():
     youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
     
     res = youtube.search().list(
-        q='viral shorts trending',
+        q='viral shorts trending action challenge',
         type='video',
         videoDuration='short',
         order='viewCount',
@@ -67,10 +67,14 @@ def analyze_live_trends_for_t2v():
     trend_context = " | ".join(titles)
 
     client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    # 🎯 YENİ PROMPT: GERÇEKÇİ (PHOTOREALISTIC) + TREND EYLEMİNİ (ÖRN: UÇMA) BİREBİR TAKLİT EDEN TALİMAT
     gemini_prompt = (
-        f"Based on trends: '{trend_context}'. "
-        "Write 3 detailed English prompts for realistic 3D cinematic animated motion scenes. "
-        "Also provide a 3-word English overlay text for each scene. "
+        f"Analyze these trending YouTube Shorts titles: '{trend_context}'. "
+        "Identify the core trending visual action or concept (e.g., flying, jumping, superhero motion, viral challenge). "
+        "Write 3 detailed English text-to-video prompts depicting a REAL PERSON or REALISTIC CHARACTER performing that exact trending action (e.g. flying through city, doing the stunt). "
+        "CRITICAL: The style MUST BE hyper-realistic, photorealistic, 8k resolution, shot on 35mm lens, realistic physics, cinematic movie scene, highly detailed photoreal human. Do NOT make it cartoon or 3D animated style. "
+        "Also provide a catchy 3-word English overlay text for each scene. "
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
@@ -92,6 +96,7 @@ def analyze_live_trends_for_t2v():
         sys.exit(1)
 
     return parsed_data[:3], "#trend #viral #shorts"
+
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
     logger.info(f"🤖 Generating AI Video {idx+1} with HF InferenceClient: '{prompt[:40]}...'")
