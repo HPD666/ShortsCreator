@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. MODAL IMAGE WITH HIGH-SPEED HF-TRANSFER ENABLED
+# 1. MODAL IMAGE WITH HIGH-SPEED HF-TRANSFER
 modal_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -55,59 +55,57 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. HIGH-QUALITY REALISTIC GPU RENDERER (RAM BOOSTED TO 32GB TO PREVENT OOM CRASH-LOOP)
-@app.cls(gpu="a10g", cpu=4.0, memory=32768, timeout=600, retries=0)
+# 2. BULLETPROOF SINGLE-CONTAINER SEQUENTIAL RENDERER
+@app.cls(gpu="a10g", cpu=4.0, memory=24576, timeout=1200, retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
         import torch
         from diffusers import LTXPipeline
 
-        print("⚡ [GPU Container] Loading photorealistic LTX-Video model...", flush=True)
+        print("⚡ [GPU Container] Single worker loading LTX-Video model...", flush=True)
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
             torch_dtype=torch.bfloat16
         )
-        
-        # Enable optimal memory offloading for A10G
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
-            
-        print("✅ [GPU Container] Model ready for rendering!", flush=True)
+        print("✅ [GPU Container] Model successfully loaded once!", flush=True)
 
     @modal.method()
-    def render(self, prompt: str) -> bytes:
+    def render_all(self, prompts: list) -> list:
         import gc
         import torch
         import tempfile
         from diffusers.utils import export_to_video
 
-        gc.collect()
-        torch.cuda.empty_cache()
+        rendered_list = []
+        for idx, prompt in enumerate(prompts):
+            gc.collect()
+            torch.cuda.empty_cache()
 
-        print(f"🎬 [GPU Container] Rendering prompt: '{prompt[:50]}...'", flush=True)
-        
-        # Full photorealistic 512x512 resolution at 20 inference steps
-        video_frames = self.pipe(
-            prompt=prompt,
-            num_inference_steps=20,
-            height=512,
-            width=512,
-            num_frames=25,
-            guidance_scale=3.0,
-        ).frames[0]
+            print(f"🎬 [GPU Container] Rendering Video {idx+1}/{len(prompts)}: '{prompt[:40]}...'", flush=True)
+            
+            video_frames = self.pipe(
+                prompt=prompt,
+                num_inference_steps=20,
+                height=512,
+                width=512,
+                num_frames=25,
+                guidance_scale=3.0,
+            ).frames[0]
 
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            export_to_video(video_frames, tmp.name, fps=8)
-            with open(tmp.name, "rb") as f:
-                data = f.read()
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                export_to_video(video_frames, tmp.name, fps=8)
+                with open(tmp.name, "rb") as f:
+                    rendered_list.append(f.read())
 
-        gc.collect()
-        torch.cuda.empty_cache()
+            gc.collect()
+            torch.cuda.empty_cache()
+            print(f"✅ [GPU Container] Video {idx+1} complete!", flush=True)
 
-        print("✅ [GPU Container] Frame rendering complete!", flush=True)
-        return data
+        return rendered_list
 
 
 # OAuth Token Management
@@ -201,22 +199,21 @@ def main():
     scenes, video_title = analyze_live_trends_for_t2v()
     video_clips = []
 
-    logger.info("🚀 Modal GPU session launching parallel workers...")
+    logger.info("🚀 Modal GPU session launching single stable worker...")
     with app.run():
         generator = VideoGenerator()
         prompts = [scene["prompt"] for scene in scenes]
         
-        # Parallel execution: All 3 videos render simultaneously on separate GPU containers
-        logger.info("⚡ Rendering 3 videos simultaneously on Modal...")
-        rendered_bytes = list(generator.render.map(prompts))
+        # Single container sequential execution guarantees NO crash loops
+        rendered_bytes_list = generator.render_all.remote(prompts)
 
-        for idx, (scene, video_bytes) in enumerate(zip(scenes, rendered_bytes)):
+        for idx, (scene, video_bytes) in enumerate(zip(scenes, rendered_bytes_list)):
             output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
             with open(output_path, "wb") as f:
                 f.write(video_bytes)
 
             if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"✅ AI Video Clip {idx+1} rendered and received!")
+                logger.info(f"✅ Processing Clip {idx+1}/3...")
                 clip = VideoFileClip(str(output_path))
 
                 # 🎬 9:16 VERTICAL CROP
@@ -250,11 +247,11 @@ def main():
                 video_clips.append(composite)
 
     if not video_clips:
-        logger.error("❌ No AI video clips were generated. Aborting execution.")
+        logger.error("❌ No AI video clips were generated.")
         sys.exit(1)
 
     try:
-        logger.info("🎬 Combining clips and rendering final audio-video stream...")
+        logger.info("🎬 Stitching video clips & finalizing MP4...")
         final_video = concatenate_videoclips(video_clips, method="compose")
         output_file = OUT_DIR / "short_video.mp4"
         
@@ -265,7 +262,7 @@ def main():
             audio_codec="aac", 
             logger=None
         )
-        logger.info(f"✅ Final video created: {output_file}")
+        logger.info(f"✅ Final video saved: {output_file}")
 
         if os.path.exists('token.json'):
             logger.info("🚀 Uploading to YouTube Shorts...")
@@ -293,9 +290,9 @@ def main():
             if video_id:
                 try:
                     youtube.videos().rate(id=video_id, rating='like').execute()
-                    logger.info("👍 Video automatically liked!")
+                    logger.info("👍 Auto-liked!")
                 except Exception as like_error:
-                    logger.warning(f"⚠️ Unable to auto-like video: {like_error}")
+                    logger.warning(f"⚠️ Auto-like skipped: {like_error}")
 
     except Exception as e:
         logger.error(f"Render/Upload Error: {e}")
