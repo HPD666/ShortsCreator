@@ -68,7 +68,7 @@ def analyze_live_trends_for_t2v():
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 🎯 YENİ PROMPT: GERÇEKÇİ (PHOTOREALISTIC) + TREND EYLEMİNİ (ÖRN: UÇMA) BİREBİR TAKLİT EDEN TALİMAT
+    # GERÇEKÇİ (PHOTOREALISTIC) + TREND EYLEMİ
     gemini_prompt = (
         f"Analyze these trending YouTube Shorts titles: '{trend_context}'. "
         "Identify the core trending visual action or concept (e.g., flying, jumping, superhero motion, viral challenge). "
@@ -96,7 +96,6 @@ def analyze_live_trends_for_t2v():
         sys.exit(1)
 
     return parsed_data[:3], "#trend #viral #shorts"
-
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
     logger.info(f"🤖 Generating AI Video {idx+1} with HF InferenceClient: '{prompt[:40]}...'")
@@ -152,19 +151,27 @@ def main():
         
         if ai_video_file and os.path.exists(ai_video_file):
             try:
-                clip = VideoFileClip(ai_video_file).resized(height=1024)
+                clip = VideoFileClip(ai_video_file)
+
+                # 🎬 VİDEOYU DIKEY (9:16 SHORTS) FORMATINA GEÇİRME
+                # Yüksekliği 1920px yapıp merkeze odaklayarak dikey kırpıyoruz (görüntü yamulmaz)
+                clip_resized = clip.resized(height=1920)
+                vertical_clip = clip_resized.cropped(
+                    x_center=clip_resized.w / 2, 
+                    width=1080
+                )
 
                 txt_clip = TextClip(
                     text=scene["text"],
-                    font_size=42,
+                    font_size=55,
                     color='yellow',
                     stroke_color='black',
-                    stroke_width=2,
+                    stroke_width=3,
                     method='caption',
-                    size=(500, 200)
-                ).with_duration(clip.duration).with_position(('center', 0.75), relative=True)
+                    size=(900, 300)
+                ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-                video_clips.append(CompositeVideoClip([clip, txt_clip]))
+                video_clips.append(CompositeVideoClip([vertical_clip, txt_clip]))
             except Exception as e:
                 logger.warning(f"Klip işleme hatası ({idx+1}): {e}")
 
@@ -194,7 +201,7 @@ def main():
             body = {
                 'snippet': {
                     'title': video_title,
-                    'description': f'{video_title} #shorts #aivideo #trending',
+                    'description': f'{video_title} #shorts #trending',
                     'categoryId': '22'
                 },
                 'status': {
