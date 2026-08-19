@@ -2,9 +2,9 @@ name: YouTube Otomatik Yukleme
 
 on:
   schedule:
-  
+    # Her gün Türkiye saatiyle 09:00'da otomatik çalışır (UTC 06:00)
     - cron: '0 7 * * *'
-  workflow_dispatch: # İster elle çalıştırma butonu
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,10 +20,11 @@ jobs:
       - name: Kütüphaneleri Yükle
         run: |
           python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 gtts moviepy requests
+          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 gtts moviepy requests Pillow
 
       - name: Botu Çalıştır
         env:
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
           CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python main.py
