@@ -10,7 +10,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from PIL import Image
 
-import google.generativeai as genai
+from google import genai
 from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -25,8 +25,7 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
         f.write(os.environ['TOKEN_JSON'])
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
@@ -40,31 +39,45 @@ def get_trend_and_scenario():
     logger.info("🔍 Trend YouTube Short indiriliyor ve analiz ediliyor...")
     audio_path = TMP_DIR / "viral_audio.mp3"
     
-    url = "https://www.youtube.com/feed/trending"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-    soup = BeautifulSoup(r.text, "html.parser")
-    short_url = "https://www.youtube.com/shorts/"
-    for a in soup.find_all("a", href=True):
-        if "/shorts/" in a["href"]:
-            short_url = "https://www.youtube.com" + a["href"].split("&")[0]
-            break
+    short_url = None
+    try:
+        url = "https://www.youtube.com/feed/trending"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=15)
+        soup = BeautifulSoup(r.text, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/shorts/" in href and len(href.split("/shorts/")[1]) > 3:
+                short_url = "https://www.youtube.com" + href.split("&")[0]
+                break
+    except Exception as e:
+        logger.warning(f"Trend URL çekilemedi: {e}")
 
-    # Sesi İndir
-    cmd = ["yt-dlp", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", str(audio_path), short_url]
-    subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Fallback varsayılan video URL
+    if not short_url:
+        short_url = "https://www.youtube.com/shorts/513e8_W4428"
 
-    # Gemini ile 3D Senaryo Üretimi (Ücretsiz Yapay Zeka Analizi)
+    # Sesi İndir (Çökme Korumalı)
+    try:
+        cmd = ["yt-dlp", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", str(audio_path), short_url]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception as e:
+        logger.warning(f"yt-dlp indirme yapamadı, yedek ses kullanılıyor: {e}")
+        res = requests.get("https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3")
+        with open(audio_path, "wb") as f:
+            f.write(res.content)
+
+    # Gemini ile 3D Senaryo Üretimi
     scenario_prompts = [
         f"{CHARACTER_3D_STYLE}, starting pose of viral trend, holding item, dynamic 3D camera shot",
         f"{CHARACTER_3D_STYLE}, performing the viral action, shocked expression, close up 3D render",
         f"{CHARACTER_3D_STYLE}, chaotic funny trend finale, 3D cinematic explosion perspective"
     ]
 
-    if GEMINI_API_KEY:
+    if client:
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(
-                f"Break down the latest viral short trend ({short_url}) into 3 sequential image prompts for a 3D animated character. Keep it simple."
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=f"Break down the latest viral short trend ({short_url}) into 3 sequential image prompts for a 3D animated character. Keep it simple."
             )
             logger.info(f"Gemini Trend Analizi: {response.text[:100]}...")
         except Exception as e:
