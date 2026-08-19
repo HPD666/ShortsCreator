@@ -2,7 +2,14 @@ import os
 import sys
 import logging
 import tempfile
+import warnings
 from pathlib import Path
+
+# HTTP ve SDK uyarı/log kirliliğini bastırma
+warnings.filterwarnings("ignore")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 from huggingface_hub import InferenceClient
 from moviepy import (
@@ -84,9 +91,7 @@ def analyze_live_trends_for_t2v():
         logger.error("❌ Yetersiz sayıda prompt üretildi.")
         sys.exit(1)
 
-    
-return parsed_data[:3], "#trend #viral #shorts"
-
+    return parsed_data[:3], "#trend #viral #shorts"
 
 def generate_ai_video_clip(prompt: str, idx: int) -> str:
     logger.info(f"🤖 Generating AI Video {idx+1} with HF InferenceClient: '{prompt[:40]}...'")
@@ -96,10 +101,8 @@ def generate_ai_video_clip(prompt: str, idx: int) -> str:
         logger.error("❌ HF_TOKEN ortam değişkeni bulunamadı!")
         return None
 
-    # Hugging Face InferenceClient
     client = InferenceClient(token=HF_TOKEN)
 
-    # Sunucu tarafında aktif çalışan modeller
     models_to_try = [
         "Lightricks/LTX-Video",
         "tencent/HunyuanVideo",
@@ -120,7 +123,6 @@ def generate_ai_video_clip(prompt: str, idx: int) -> str:
         except Exception as e:
             logger.warning(f"Model {model_name} failed: {e}")
 
-    # GradioClient alternatif bağlantı testi (Headers auth ile)
     try:
         from gradio_client import Client as GradioClient
         logger.info("🔄 Trying GradioClient with Authorization header fallback...")
