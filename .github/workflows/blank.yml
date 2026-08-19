@@ -2,7 +2,7 @@ name: Free 3D Video Bot
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Her gün saat 6000'de otomatik çalışır
+    - cron: '0 18 * * *' # Her gün TSİ 21:00'de (Küresel Prime Time) otomatik çalışır
   workflow_dispatch:
 
 jobs:
@@ -17,10 +17,8 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: FFmpeg Yükle (Hızlı)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: FFmpeg Hazır Kurulum (1 Saniye)
+        uses: FedericoCarboni/setup-ffmpeg@v3
 
       - name: Bağımlılıkları Yükle
         run: |
