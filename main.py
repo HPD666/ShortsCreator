@@ -56,7 +56,7 @@ app = modal.App("ai-t2v-creator", image=modal_image)
 
 
 # 2. MODAL GPU CLASS WITH EXPLICIT STEP LOGGING
-@app.cls(gpu="a100", timeout=900)
+@app.cls(gpu="a10g", timeout=900)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
@@ -67,6 +67,12 @@ class VideoGenerator:
             "Lightricks/LTX-Video",
             torch_dtype=torch.bfloat16
         ).to("cuda")
+        
+        # Memory optimization settings
+        self.pipe.enable_model_cpu_offload()
+        if hasattr(self.pipe, "enable_vae_slicing"):
+            self.pipe.enable_vae_slicing()
+            
         print("✅ [GPU Container] Model successfully loaded into VRAM!", flush=True)
 
     @modal.method()
