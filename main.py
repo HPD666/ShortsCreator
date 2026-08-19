@@ -1,201 +1,187 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shorts Trend & Öncü Influencer Bulucu</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background-color: #0f0f0f; color: #f1f1f1; }
-        .container { max-width: 900px; margin: auto; background: #212121; padding: 30px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
-        h2 { color: #ff0000; margin-top: 0; }
-        input { padding: 14px; margin: 10px 0; width: 100%; box-sizing: border-box; border-radius: 8px; border: 1px solid #3d3d3d; background: #121212; color: #fff; font-size: 15px; }
-        button { padding: 14px; width: 100%; background-color: #ff0000; color: white; border: none; font-weight: bold; border-radius: 8px; font-size: 16px; cursor: pointer; transition: 0.2s; }
-        button:hover { background-color: #cc0000; }
-        .card { background: #181818; border: 1px solid #333; padding: 20px; margin-top: 20px; border-radius: 8px; border-left: 6px solid #ff0000; }
-        .card-header { font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 8px; }
-        .badge { background: #2a2a2a; color: #aaa; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-right: 8px; display: inline-block; }
-        .badge-pioneer { background: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }
-        .error-box { background: #b71c1c; color: #fff; padding: 15px; border-radius: 8px; margin-top: 15px; }
-        a { color: #3ea6ff; text-decoration: none; font-weight: 600; }
-        a:hover { text-decoration: underline; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 12px 0; background: #282828; padding: 12px; border-radius: 6px; }
-    </style>
-</head>
-<body>
+import os
+import sys
+import logging
+import tempfile
+import requests
+import shutil
+from pathlib import Path
 
-<div class="container">
-    <h2>🎯 Kesin Trend & Öncü Influencer Tespiti</h2>
-    <p style="color: #aaa; font-size: 14px;">API Key'inizi girip butona basın. Sistem otomatik olarak Shorts akımlarını tarayıp ilk yükleyen kanalı tespit edecektir.</p>
+from gradio_client import Client
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from googleapiclient.http import MediaFileUpload
+
+try:
+    from google import genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("shorts-creator")
+
+if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
+    try:
+        with open('token.json', 'w') as f:
+            f.write(os.environ['TOKEN_JSON'])
+    except Exception as e:
+        logger.warning(f"token.json yazılamadı: {e}")
+
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
+YT_API_KEY = os.environ.get("YT_API_KEY", None)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
+
+OUT_DIR = Path("outputs")
+OUT_DIR.mkdir(exist_ok=True)
+TMP_DIR = Path(tempfile.mkdtemp(prefix="t2v-pipeline-"))
+
+def get_live_trend_prompts():
+    default_prompts = [
+        "3D Pixar style cute robot character moving and dancing, high quality, 9:16 vertical video",
+        "3D Pixar style cute robot character walking excitedly, high quality, 9:16 vertical video",
+        "3D Pixar style cute robot character waving hands and celebrating, high quality, 9:16 vertical video"
+    ]
     
-    <input type="text" id="apiKey" placeholder="YouTube Data API Key Giriniz">
-    <button onclick="runPioneerDetection()">Otomatik Trend Analizini Çalıştır</button>
+    if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
+        return default_prompts, "#shorts #3d #viral #trending"
 
-    <div id="results"></div>
-</div>
+    try:
+        youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
+        res = youtube.search().list(q='shorts viral challenge', type='video', videoDuration='short', maxResults=5, part='snippet').execute()
+        
+        titles = [item['snippet']['title'] for item in res.get('items', [])]
+        trend_context = " | ".join(titles)
 
-<script>
-function tokenize(text) {
-    return text.toLowerCase()
-        .replace(/[^a-z0-9ğüşıöç# ]/gi, '')
-        .split(/\s+/)
-        .filter(w => w.length > 2);
-}
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        gemini_prompt = (
+            f"YouTube Shorts trendleri: '{trend_context}'. "
+            "Bu trende uygun, hareket içeren 3D Pixar stilinde 3 farklı canlı video sahne tanımı (İngilizce T2V prompt) yaz. "
+            "Yanıtı aralarında '---' olacak şekilde ver."
+        )
+        
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=gemini_prompt)
+        generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
+        
+        if len(generated_prompts) >= 3:
+            clean_tag = titles[0][:15].replace(' ', '').replace('#', '')
+            return generated_prompts[:3], f"#shorts #trending #{clean_tag}"
+    except Exception as e:
+        logger.warning(f"Trend çekme hatası: {e}")
+        
+    return default_prompts, "#shorts #3d #viral"
 
-function getSimilarity(text1, text2) {
-    const tokens1 = tokenize(text1);
-    const tokens2 = tokenize(text2);
-    if (!tokens1.length || !tokens2.length) return 0;
+def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
+    """Yalnızca doğrudan video (MP4) üreten T2V sunucularını tetikler."""
+    logger.info(f"🎬 Klip {idx+1} için T2V yapay zekası çalıştırılıyor...")
 
-    const set1 = new Set(tokens1);
-    const set2 = new Set(tokens2);
+    # Aktif çalışan Text-to-Video sunucuları
+    t2v_spaces = [
+        {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
+        {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"},
+        {"space": "fffiloni/ZeroScope-T2V", "api_name": "/predict"}
+    ]
 
-    let intersection = 0;
-    set1.forEach(t => { if (set2.has(t)) intersection++; });
+    for config in t2v_spaces:
+        try:
+            logger.info(f"🔄 Sunucu deneniyor: {config['space']}")
+            client = Client(config["space"], token=HF_TOKEN, verbose=False) if HF_TOKEN else Client(config["space"], verbose=False)
+            result = client.predict(prompt, api_name=config["api_name"])
+            
+            video_file = None
+            if isinstance(result, str) and os.path.exists(result):
+                video_file = result
+            elif isinstance(result, (list, tuple)) and len(result) > 0:
+                item = result[0]
+                video_file = item if isinstance(item, str) else item.get("video")
 
-    return intersection / (set1.size + set2.size - intersection);
-}
+            # Yalnızca geçerli bir MP4 video dosyasıysa kabul et
+            if video_file and os.path.exists(video_file) and str(video_file).lower().endswith('.mp4'):
+                shutil.copy(video_file, str(output_path))
+                logger.info(f"✅ Klip {idx+1} doğrudan video olarak üretildi.")
+                return True
+        except Exception as e:
+            logger.warning(f"⚠️ Sunucu yanıt vermedi ({config['space']}): {e}")
 
-async function runPioneerDetection() {
-    const apiKey = document.getElementById('apiKey').value.trim();
-    const resultsDiv = document.getElementById('results');
+    logger.error(f"❌ Klip {idx+1} için hiçbir T2V sunucusu video üretemedi.")
+    return False
 
-    if (!apiKey) {
-        alert("Lütfen geçerli bir API Key girin!");
-        return;
-    }
+def download_audio() -> str:
+    audio_path = TMP_DIR / "viral_audio.mp3"
+    pixabay_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
+    try:
+        res = requests.get(pixabay_url, timeout=30)
+        if res.status_code == 200:
+            with open(audio_path, "wb") as f:
+                f.write(res.content)
+    except Exception as e:
+        logger.warning(f"Müzik indirilemedi: {e}")
+    return str(audio_path)
 
-    resultsDiv.innerHTML = "<p style='color:#aaa;'>1/4: Shorts verileri çekiliyor...</p>";
+def main():
+    prompts, video_title = get_live_trend_prompts()
+    audio_path = download_audio()
+    video_clips = []
 
-    try {
-        // Geniş arama parametresi ile güncel Shorts içeriklerini çekme
-        const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=50&q=shorts&type=video&videoDuration=short&key=${apiKey}`;
-        const searchRes = await fetch(searchUrl);
-        const searchData = await searchRes.json();
+    for idx, prompt in enumerate(prompts):
+        clip_path = TMP_DIR / f"pure_clip_{idx}.mp4"
+        success = generate_pure_t2v(prompt, idx, clip_path)
+        
+        if success and clip_path.exists():
+            try:
+                clip = VideoFileClip(str(clip_path))
+                video_clips.append(clip)
+            except Exception as e:
+                logger.warning(f"Klip okunamadı: {e}")
 
-        if (searchData.error) {
-            resultsDiv.innerHTML = `
-                <div class="error-box">
-                    <strong>API Hatası Oluştu!</strong><br>
-                    Kod: ${searchData.error.code}<br>
-                    Mesaj: ${searchData.error.message}
-                </div>`;
-            return;
-        }
+    if not video_clips:
+        logger.error("❌ Hiçbir video klibi oluşturulamadı. İşlem durduruluyor.")
+        sys.exit(1)
 
-        if (!searchData.items || searchData.items.length === 0) {
-            resultsDiv.innerHTML = "<p>Video verisi dönmedi. Lütfen tekrar deneyin.</p>";
-            return;
-        }
+    try:
+        final_video = concatenate_videoclips(video_clips, method="compose")
+        
+        if os.path.exists(audio_path):
+            try:
+                audio_clip = AudioFileClip(audio_path)
+                if audio_clip.duration > final_video.duration:
+                    audio_clip = audio_clip.subclip(0, final_video.duration)
+                final_video = final_video.set_audio(audio_clip)
+            except Exception as e:
+                logger.warning(f"Ses eklenemedi: {e}")
 
-        const videoIds = searchData.items.map(i => i.id.videoId).join(',');
-        const channelIds = [...new Set(searchData.items.map(i => i.snippet.channelId))].join(',');
+        output_path = OUT_DIR / "short_video.mp4"
+        final_video.write_videofile(
+            str(output_path), 
+            fps=24, 
+            codec="libx264", 
+            audio_codec="aac", 
+            logger=None
+        )
 
-        resultsDiv.innerHTML = "<p style='color:#aaa;'>2/4: Yayınlanma zamanları ve kanal bilgileri çekiliyor...</p>";
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json')
+            youtube = build('youtube', 'v3', credentials=creds)
 
-        const videoStatsUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${videoIds}&key=${apiKey}`;
-        const channelStatsUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds}&key=${apiKey}`;
-
-        const [videoRes, channelRes] = await Promise.all([
-            fetch(videoStatsUrl).then(r => r.json()),
-            fetch(channelStatsUrl).then(r => r.json())
-        ]);
-
-        const channelMap = {};
-        if (channelRes.items) {
-            channelRes.items.forEach(c => {
-                channelMap[c.id] = parseInt(c.statistics.subscriberCount || 0);
-            });
-        }
-
-        const processedVideos = videoRes.items.map(item => {
-            return {
-                id: item.id,
-                title: item.snippet.title,
-                description: item.snippet.description,
-                fullText: `${item.snippet.title} ${item.snippet.description}`,
-                views: parseInt(item.statistics.viewCount || 0),
-                channelTitle: item.snippet.channelTitle,
-                subscribers: channelMap[item.snippet.channelId] || 0,
-                publishedAt: new Date(item.snippet.publishedAt).getTime(),
-                publishedAtFormatted: new Date(item.snippet.publishedAt).toLocaleString('tr-TR'),
-                url: `https://www.youtube.com/shorts/${item.id}`
-            };
-        });
-
-        resultsDiv.innerHTML = "<p style='color:#aaa;'>3/4: Zaman analizi ve taklit eşleştirmesi yapılıyor...</p>";
-
-        const clusters = [];
-        const similarityThreshold = 0.20; // Esnek benzerlik oranı
-
-        processedVideos.forEach(video => {
-            let matchedCluster = null;
-
-            for (let cluster of clusters) {
-                const sim = getSimilarity(video.fullText, cluster.referenceText);
-                if (sim >= similarityThreshold) {
-                    matchedCluster = cluster;
-                    break;
+            body = {
+                'snippet': {
+                    'title': video_title,
+                    'description': f'{video_title} #viral #shorts',
+                    'categoryId': '22'
+                },
+                'status': {
+                    'privacyStatus': 'public',
+                    'selfDeclaredMadeForKids': False,
+                    'containsSyntheticMedia': True
                 }
             }
+            media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
+            youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
+            logger.info("🎉 Hareketli video YouTube Shorts'a yüklendi!")
 
-            if (matchedCluster) {
-                matchedCluster.videos.push(video);
-                matchedCluster.totalViews += video.views;
+    except Exception as e:
+        logger.error(f"Kurgu/Yükleme hatası: {e}")
+        sys.exit(1)
 
-                // Tarihi daha eski olan videoyu ilk yükleyen (öncü) yap
-                if (video.publishedAt < matchedCluster.pioneerVideo.publishedAt) {
-                    matchedCluster.pioneerVideo = video;
-                }
-            } else {
-                clusters.push({
-                    referenceText: video.fullText,
-                    pioneerVideo: video,
-                    videos: [video],
-                    totalViews: video.views
-                });
-            }
-        });
-
-        const activeTrends = clusters
-            .filter(c => c.videos.length > 1)
-            .sort((a, b) => b.videos.length - a.videos.length)
-            .slice(0, 5);
-
-        resultsDiv.innerHTML = "<h3>🔥 Tespit Edilen Akımlar ve İlk Yükleyen Öncüler</h3>";
-
-        if (activeTrends.length === 0) {
-            resultsDiv.innerHTML += "<p>Ayrıştırılabilir bir taklit kümesi bulunamadı. Butona tekrar basarak yeni verileri taratabilirsiniz.</p>";
-            return;
-        }
-
-        activeTrends.forEach((trend, idx) => {
-            const pioneer = trend.pioneerVideo;
-            const isInfluencer = pioneer.subscribers >= 100000;
-
-            resultsDiv.innerHTML += `
-                <div class="card">
-                    <div class="card-header">#${idx + 1} Akım: "${pioneer.title}"</div>
-                    <div>
-                        <span class="badge badge-pioneer">👑 Akımı İlk Başlatan: ${pioneer.channelTitle} (${pioneer.subscribers.toLocaleString('tr-TR')} Abone)</span>
-                        <span class="badge">Taklit Edilme Sayısı: ${trend.videos.length - 1} Video</span>
-                        ${isInfluencer ? '<span class="badge" style="background:#4a148c; color:#e1bee7;">Onaylı Influencer</span>' : ''}
-                    </div>
-                    <div class="stats-grid">
-                        <div><strong>İlk Yüklenme Tarihi:</strong> ${pioneer.publishedAtFormatted}</div>
-                        <div><strong>Öncü Video İzlenmesi:</strong> ${pioneer.views.toLocaleString('tr-TR')}</div>
-                        <div><strong>Akımın Toplam İzlenmesi:</strong> ${trend.totalViews.toLocaleString('tr-TR')}</div>
-                    </div>
-                    <p><a href="${pioneer.url}" target="_blank">Akımın Çıktığı İlk Short'u İzle ➔</a></p>
-                </div>
-            `;
-        });
-
-    } catch (err) {
-        console.error(err);
-        resultsDiv.innerHTML = "<div class='error-box'>İstek işlenirken bağlantı veya veri hatası oluştu. Konsolu inceleyebilirsiniz.</div>";
-    }
-}
-</script>
-
-</body>
-</html>
+if __name__ == "__main__":
+    main()
