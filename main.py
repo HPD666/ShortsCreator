@@ -3,7 +3,7 @@ import sys
 import logging
 import tempfile
 import requests
-import subprocess
+import shutil
 from pathlib import Path
 
 from gradio_client import Client
@@ -41,28 +41,51 @@ def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
     """Hugging Face yetkili tokenı ile Metinden-Videoya (T2V) üretimi yapar."""
     logger.info(f"🎬 Klip {idx+1} için Metinden-Videoya (T2V) üretiliyor...")
 
-    spaces = [
-        "Wan-AI/Wan2.1-T2V-1.3B",
-        "artificialguybr/CogVideoX-5B-Text2Video",
-        "fffiloni/ZeroScope-T2V"
+    # Güncel ve çalışan T2V Space listesi (Gradio API isimleriyle birlikte)
+    spaces_config = [
+        {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
+        {"space": "artificialguybr/CogVideoX-5B-Text2Video", "api_name": "/predict"},
+        {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"}
     ]
 
-    for space_name in spaces:
+    for config in spaces_config:
+        space_name = config["space"]
+        api_name = config["api_name"]
+
         try:
             logger.info(f"🔄 HF Space bağlanıyor: {space_name}")
-            # hf_token parametresi 401 yetki hatasını engeller
-            client = Client(space_name, hf_token=HF_TOKEN, verbose=False)
             
-            job = client.submit(prompt=prompt, api_name="/predict")
-            result = job.result(timeout=180)
+            # HuggingFace Token Doğru Bağlama
+            client = Client(space_name, token=HF_TOKEN, verbose=False) if HF_TOKEN else Client(space_name, verbose=False)
             
-            if result and os.path.exists(str(result)):
-                with open(result, "rb") as src, open(output_path, "wb") as dst:
-                    dst.write(src.read())
+            # Tahmin/Üretim isteği
+            result = client.predict(
+                prompt,
+                api_name=api_name
+            )
+            
+            # Gradio dönen sonucu analiz et (dosya yolu, tuple veya dict olabilir)
+            video_file = None
+            if isinstance(result, str) and os.path.exists(result):
+                video_file = result
+            elif isinstance(result, (list, tuple)) and len(result) > 0:
+                for item in result:
+                    if isinstance(item, str) and os.path.exists(item):
+                        video_file = item
+                        break
+                    elif isinstance(item, dict) and "video" in item and os.path.exists(item["video"]):
+                        video_file = item["video"]
+                        break
+
+            if video_file:
+                shutil.copy(video_file, str(output_path))
                 logger.info(f"✅ Klip {idx+1} başarıyla üretildi ({space_name})")
                 return True
+            else:
+                logger.warning(f"⚠️ {space_name} geçerli dosya dönmedi.")
+
         except Exception as e:
-            logger.warning(f"⚠️ {space_name} geçildi: {e}")
+            logger.warning(f"⚠️ {space_name} başarısız oldu: {e}")
 
     return False
 
@@ -94,7 +117,7 @@ def main():
                 logger.warning(f"Klip okunamadı: {e}")
 
     if not video_clips:
-        logger.error("❌ Sunuculardan klip alınamadı. Lütfen HF_TOKEN eklendiğinden emin olun.")
+        logger.error("❌ Sunuculardan klip alınamadı. Lütfen GitHub Secrets içinde HF_TOKEN eklendiğinden emin olun.")
         sys.exit(0)
 
     try:
