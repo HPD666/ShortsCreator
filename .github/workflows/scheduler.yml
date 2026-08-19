@@ -31,8 +31,10 @@ jobs:
           pip install modal
           modal token set --token-id $MODAL_TOKEN_ID --token-secret $MODAL_TOKEN_SECRET
 
-      - name: Run Main Script
+          - name: Run Main Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
         run: |
           python main.py
+
