@@ -77,8 +77,9 @@ def analyze_live_trends_for_t2v():
         "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
     )
     
-    # ✅ MODEL İSMİ GÜNCELLENDİ (gemini-2.5-flash)
-    response = client.models.generate_content(model='gemini-2.0-flash', contents=gemini_prompt)
+ 
+    response = client.models.generate_content(model='gemini-3.6-flash', contents=gemini_prompt)
+
 
 
     if not response or not response.text:
