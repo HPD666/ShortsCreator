@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import logging
 import tempfile
 import warnings
@@ -33,7 +34,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. MODAL İMAJ TANIMI (İmaj Derleme Hızlı ve Hafif Tutuldu)
+# 1. MODAL İMAJ TANIMI
 modal_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -49,7 +50,7 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. MODAL GPU SINIFI (Model GPU Açıldığında Bir Kez Yüklenir)
+# 2. MODAL GPU SINIFI
 @app.cls(gpu="a10g", timeout=900)
 class VideoGenerator:
     @modal.enter()
@@ -129,15 +130,23 @@ def analyze_live_trends_for_t2v():
     )
     
     response = None
-    for model_name in ['gemini-3.6-flash', 'gemini-1.5-flash']:
-        try:
-            logger.info(f"🤖 Requesting Gemini model: {model_name}...")
-            response = client.models.generate_content(model=model_name, contents=gemini_prompt)
-            if response and response.text:
-                logger.info(f"✅ Gemini yanıtı başarıyla alındı ({model_name}).")
-                break
-        except Exception as e:
-            logger.warning(f"⚠️ {model_name} ile istek başarısız oldu: {e}")
+    models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']
+    
+    # 503 Yoğunluk hatalarına karşı otomatik 3 defa deneme döngüsü
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                logger.info(f"🤖 Requesting Gemini model: {model_name} (Deneme {attempt + 1}/3)...")
+                response = client.models.generate_content(model=model_name, contents=gemini_prompt)
+                if response and response.text:
+                    logger.info(f"✅ Gemini yanıtı başarıyla alındı ({model_name}).")
+                    break
+            except Exception as e:
+                logger.warning(f"⚠️ {model_name} (Deneme {attempt + 1}) başarısız: {e}")
+                time.sleep(3)
+        
+        if response and response.text:
+            break
 
     if not response or not response.text:
         logger.error("❌ Gemini trend analizinde hata oluştu.")
