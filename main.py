@@ -4,9 +4,9 @@ import logging
 import tempfile
 import requests
 import shutil
+import urllib.parse
 from pathlib import Path
 
-from gradio_client import Client
 from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -28,7 +28,6 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     except Exception as e:
         logger.warning(f"token.json yazılamadı: {e}")
 
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
 YT_API_KEY = os.environ.get("YT_API_KEY", None)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
 
@@ -44,9 +43,11 @@ def get_live_trend_prompts():
     ]
     
     if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
+        logger.warning("Eksik API veya kütüphane. Varsayılan 3D konsept kullanılıyor.")
         return default_prompts, "#shorts #3d #viral #trending"
 
     try:
+        logger.info("🔥 YouTube Shorts trendleri çekiliyor...")
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
         res = youtube.search().list(q='shorts viral challenge', type='video', videoDuration='short', maxResults=5, part='snippet').execute()
         
@@ -60,13 +61,14 @@ def get_live_trend_prompts():
             "Yanıtı aralarında '---' olacak şekilde ver."
         )
         
-        # Güncel Gemini modelleri deneniyor
-        models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
+        # Güncel çalışan Gemini 2.0 modelleri
+        models_to_try = ['gemini-2.0-flash', 'gemini-2.0-flash-lite']
         response = None
         for model_name in models_to_try:
             try:
                 response = client.models.generate_content(model=model_name, contents=gemini_prompt)
                 if response and response.text:
+                    logger.info(f"✅ Gemini trend promptları üretildi ({model_name}).")
                     break
             except Exception as model_err:
                 logger.warning(f"Gemini {model_name} denenirken hata: {model_err}")
@@ -82,38 +84,26 @@ def get_live_trend_prompts():
     return default_prompts, "#shorts #3d #viral"
 
 def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
-    """Aktif T2V sunucularından doğrudan MP4 video üretir."""
-    logger.info(f"🎬 Klip {idx+1} için T2V yapay zekası çalıştırılıyor...")
+    """Gerçek T2V API üzerinden hızlı ve doğrudan MP4 video üretir."""
+    logger.info(f"🎬 Klip {idx+1} için T2V videosu üretiliyor: '{prompt[:30]}...'")
 
-    # Güncel ve aktif T2V Gradio alanları
-    t2v_spaces = [
-        {"space": "guoyww/AnimateDiff", "api_name": "/generate"},
-        {"space": "multimodalart/VideoCrafter2", "api_name": "/predict"},
-        {"space": "video-crafter/VideoCrafter", "api_name": "/predict"},
-        {"space": "hysts/AnimateDiff", "api_name": "/generate"}
-    ]
+    try:
+        encoded_prompt = urllib.parse.quote(prompt)
+        # Doğrudan T2V Video API bağlantısı
+        video_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024&seed={idx+42}"
+        
+        response = requests.get(video_url, timeout=120)
+        
+        if response.status_code == 200 and len(response.content) > 10000:
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+            logger.info(f"✅ Klip {idx+1} T2V motorundan başarıyla indirildi.")
+            return True
+        else:
+            logger.warning(f"⚠️ Video API yanıtı yetersiz veya başarısız: HTTP {response.status_code}")
+    except Exception as e:
+        logger.error(f"❌ Video üretme hatası: {e}")
 
-    for config in t2v_spaces:
-        try:
-            logger.info(f"🔄 Sunucu deneniyor: {config['space']}")
-            client = Client(config["space"], token=HF_TOKEN, verbose=False) if HF_TOKEN else Client(config["space"], verbose=False)
-            result = client.predict(prompt, api_name=config["api_name"])
-            
-            video_file = None
-            if isinstance(result, str) and os.path.exists(result):
-                video_file = result
-            elif isinstance(result, (list, tuple)) and len(result) > 0:
-                item = result[0]
-                video_file = item if isinstance(item, str) else item.get("video")
-
-            if video_file and os.path.exists(video_file) and str(video_file).lower().endswith('.mp4'):
-                shutil.copy(video_file, str(output_path))
-                logger.info(f"✅ Klip {idx+1} ({config['space']}) üzerinden başarıyla üretildi.")
-                return True
-        except Exception as e:
-            logger.warning(f"⚠️ Sunucu yanıt vermedi ({config['space']}): {e}")
-
-    logger.error(f"❌ Klip {idx+1} için geçerli T2V sunucusu bulunamadı.")
     return False
 
 def download_audio() -> str:
@@ -124,6 +114,7 @@ def download_audio() -> str:
         if res.status_code == 200:
             with open(audio_path, "wb") as f:
                 f.write(res.content)
+            logger.info("🎵 Arka plan müziği indirildi.")
     except Exception as e:
         logger.warning(f"Müzik indirilemedi: {e}")
     return str(audio_path)
@@ -157,6 +148,7 @@ def main():
                 if audio_clip.duration > final_video.duration:
                     audio_clip = audio_clip.subclipped(0, final_video.duration)
                 final_video = final_video.with_audio(audio_clip)
+                logger.info("🔊 Müzik videoya bağlandı.")
             except Exception as e:
                 logger.warning(f"Ses eklenemedi: {e}")
 
@@ -187,7 +179,7 @@ def main():
             }
             media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
             youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Hareketli video YouTube Shorts'a yüklendi!")
+            logger.info("🎉 Hareketli 3D Short YouTube'a yüklendi!")
 
     except Exception as e:
         logger.error(f"Kurgu/Yükleme hatası: {e}")
