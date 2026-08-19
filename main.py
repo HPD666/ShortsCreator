@@ -56,7 +56,7 @@ app = modal.App("ai-t2v-creator", image=modal_image)
 
 
 # 2. MODAL GPU CLASS WITH EXPLICIT STEP LOGGING & MEMORY FIXES
-@app.cls(gpu="a10g", timeout=900, max_retries=0)
+@app.cls(gpu="a10g", timeout=900, retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
