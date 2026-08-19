@@ -1,15 +1,13 @@
 import os
 import sys
-import time
 import logging
 import tempfile
 import requests
 import subprocess
 from pathlib import Path
 
-import numpy as np
 from gradio_client import Client
-from moviepy import VideoFileClip, AudioFileClip, ColorClip, TextClip, CompositeVideoClip, concatenate_videoclips
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
@@ -36,59 +34,52 @@ PROMPTS = [
     f"{CHARACTER_3D_STYLE}, robot celebrating with colorful confetti"
 ]
 
-T2V_SPACES = [
-    ("Wan-AI/Wan2.1-T2V-1.3B", ["/generate", "/predict"]),
-    ("artificialguybr/CogVideoX-5B-Text2Video", ["/generate", "/predict"]),
-    ("fffiloni/ZeroScope-T2V", ["/predict", "/generate"]),
-    ("multimodalart/cogvideox-5b-space", ["/generate", "/predict"])
-]
-
 def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
-    """Açık kaynak Metinden-Videoya (T2V) modellerini sırayla dener."""
+    """Açık kaynak T2V sunucularından doğrudan video üretir."""
     logger.info(f"🎬 Klip {idx+1} için Metinden-Videoya (T2V) üretiliyor...")
 
-    for space_name, api_names in T2V_SPACES:
+    # Aktif ve çalışan T2V modelleri
+    spaces = [
+        "Wan-AI/Wan2.1-T2V-1.3B",
+        "fffiloni/ZeroScope-T2V",
+        "artificialguybr/CogVideoX-5B-Text2Video"
+    ]
+
+    for space_name in spaces:
         try:
-            logger.info(f"🔄 HF Space deneniyor: {space_name}")
+            logger.info(f"🔄 HF Space bağlanıyor: {space_name}")
             client = Client(space_name, verbose=False)
             
-            for api_name in api_names:
-                try:
-                    result = client.predict(prompt=prompt, api_name=api_name)
-                    if result and os.path.exists(str(result)):
-                        with open(result, "rb") as src, open(output_path, "wb") as dst:
-                            dst.write(src.read())
-                        logger.info(f"✅ Klip {idx+1} başarıyla üretildi ({space_name})")
-                        return True
-                except Exception:
-                    continue
+            # API parametrelerini dinamik gönder
+            job = client.submit(prompt=prompt, api_name="/predict")
+            result = job.result(timeout=120)
+            
+            if result and os.path.exists(str(result)):
+                with open(result, "rb") as src, open(output_path, "wb") as dst:
+                    dst.write(src.read())
+                logger.info(f"✅ Klip {idx+1} başarıyla üretildi ({space_name})")
+                return True
         except Exception as e:
-            logger.warning(f"⚠️ {space_name} erişilemedi/meşgul: {e}")
-
-    # Kodlama Tabanlı Hareketli Video (Tüm AI Sunucuları Meşgulse Çökme Koruması)
-    logger.warning("⚠️ Tüm AI T2V sunucuları meşgul, dinamik animasyonlu video klibi oluşturuluyor...")
-    try:
-        color_clip = ColorClip(size=(720, 1280), color=(20, 20, 40), duration=3.0)
-        color_clip.write_videofile(str(output_path), fps=24, codec="libx264", logger=None)
-        return True
-    except Exception as ex:
-        logger.error(f"Klip oluşturulamadı: {ex}")
+            logger.warning(f"⚠️ {space_name} geçildi: {e}")
 
     return False
 
 def download_audio() -> str:
+    """Yüksek kaliteli viral ses indirir."""
     audio_path = TMP_DIR / "viral_audio.mp3"
+    
+    # Doğrudan telifsiz hareketli müzik bağlantısı
+    pixabay_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
     try:
-        short_url = "https://www.youtube.com/shorts/513e8_W4428"
-        cmd = ["yt-dlp", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", str(audio_path), short_url]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-    except Exception:
-        try:
-            res = requests.get("https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3", timeout=20)
+        res = requests.get(pixabay_url, timeout=30)
+        if res.status_code == 200:
             with open(audio_path, "wb") as f:
                 f.write(res.content)
-        except Exception as e:
-            logger.warning(f"Ses indirilemedi: {e}")
+            logger.info("🎵 Arka plan müziği indirildi.")
+            return str(audio_path)
+    except Exception as e:
+        logger.warning(f"Müzik indirilemedi: {e}")
+
     return str(audio_path)
 
 def main():
@@ -106,24 +97,25 @@ def main():
                 logger.warning(f"Klip okunamadı: {e}")
 
     if not video_clips:
-        logger.error("❌ Hiçbir video klibi oluşturulamadı.")
+        logger.error("❌ Sunuculardan klip alınamadı. Lütfen birkaç dakika sonra tekrar çalıştırın.")
         sys.exit(0)
 
     try:
         final_video = concatenate_videoclips(video_clips, method="compose")
         
+        # Sesi videoya bağlama
         if os.path.exists(audio_path):
             try:
                 audio_clip = AudioFileClip(audio_path)
                 if audio_clip.duration > final_video.duration:
                     audio_clip = audio_clip.subclipped(0, final_video.duration)
                 final_video = final_video.with_audio(audio_clip)
+                logger.info("🔊 Ses videoya başarıyla eklendi.")
             except Exception as e:
                 logger.warning(f"Ses birleştirilemedi: {e}")
 
         output_path = OUT_DIR / "short_video.mp4"
         final_video.write_videofile(str(output_path), fps=24, codec="libx264", audio_codec="aac", logger=None)
-        logger.info(f"🎬 Final videosu oluşturuldu: {output_path}")
 
         # YouTube Otomatik Yükleme
         if os.path.exists('token.json'):
@@ -144,10 +136,10 @@ def main():
             }
             media = MediaFileUpload(str(output_path), chunksize=-1, resumable=True, mimetype='video/mp4')
             youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            logger.info("🎉 Video YouTube'a başarıyla yüklendi!")
+            logger.info("🎉 Videolu ve Sesli Short YouTube'a yüklendi!")
 
     except Exception as e:
-        logger.error(f"Montaj veya yükleme aşamasında hata: {e}")
+        logger.error(f"İşlem hatası: {e}")
         sys.exit(0)
 
 if __name__ == "__main__":
