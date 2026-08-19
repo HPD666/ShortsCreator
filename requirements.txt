@@ -1,7 +1,4 @@
 gradio_client
-moviepy
+google-genai
 google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
-requests
-yt-dlp
+moviepy
