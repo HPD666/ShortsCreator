@@ -18,10 +18,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg & ImageMagick)
+      - name: Fix Mirrors & Install System Dependencies
         run: |
-          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=10
-          sudo apt-get install -y --no-install-recommends ffmpeg imagemagick
+          sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list.d/* || true
+          sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list || true
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
 
       - name: Install Python Dependencies
         run: |
