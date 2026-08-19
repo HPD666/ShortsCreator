@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 
 from gradio_client import Client
-from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
+from moviepy import VideoFileClip, ImageClip, AudioFileClip, concatenate_videoclips
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
@@ -42,10 +42,10 @@ def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
     """Yedekli ve Garantili Metinden-Videoya (T2V) üretim fonksiyonu."""
     logger.info(f"🎬 Klip {idx+1} üretiliyor: '{prompt[:30]}...'")
 
-    # 1. YÖNTEM: Hugging Face Spaces
+    # 1. YÖNTEM: Aktif Hugging Face Spaces
     spaces_config = [
-        {"space": "Wan-AI/Wan2.1-T2V-1.3B", "api_name": "/generate"},
-        {"space": "artificialguybr/CogVideoX-5B-Text2Video", "api_name": "/predict"},
+        {"space": "damo-vilab/ModelScope-Text-To-Video-Synthesis", "api_name": "/predict"},
+        {"space": "fffiloni/ZeroScope-T2V", "api_name": "/predict"}
     ]
 
     for config in spaces_config:
@@ -72,19 +72,26 @@ def generate_t2v_video(prompt: str, idx: int, output_path: Path) -> bool:
                 logger.info(f"✅ Klip {idx+1} HF sunucusundan başarıyla alındı.")
                 return True
         except Exception as e:
-            logger.warning(f"⚠️ {space_name} yanıt vermedi veya hata döndürdü: {e}")
+            logger.warning(f"⚠️ {space_name} geçildi: {e}")
 
-    # 2. YÖNTEM (YEDEK): HF başarısız olursa Direkt Video API Fallback
+    # 2. YÖNTEM (YEDEK): HF başarısız olursa Görsel/Video Üretip MP4'e Dönüştürme
     try:
-        logger.info("⚡ HF sunucuları yoğun, yedek API (Pollinations) devreye giriyor...")
+        logger.info("⚡ HF sunucuları meşgul, yedek API devreye giriyor...")
         encoded_prompt = urllib.parse.quote(prompt)
-        video_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024"
+        img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=576&height=1024&seed={idx+42}"
         
-        response = requests.get(video_url, timeout=60)
-        if response.status_code == 200 and len(response.content) > 10000:
-            with open(output_path, "wb") as f:
+        response = requests.get(img_url, timeout=60)
+        if response.status_code == 200 and len(response.content) > 5000:
+            temp_img = TMP_DIR / f"temp_{idx}.jpg"
+            with open(temp_img, "wb") as f:
                 f.write(response.content)
-            logger.info(f"✅ Klip {idx+1} yedek API ile üretildi.")
+            
+            # İndirilen görseli 3 saniyelik MP4 klibine dönüştür
+            img_clip = ImageClip(str(temp_img)).with_duration(3)
+            img_clip.write_videofile(str(output_path), fps=24, codec="libx264", logger=None)
+            img_clip.close()
+            
+            logger.info(f"✅ Klip {idx+1} görselden 3s videoya başarıyla dönüştürüldü.")
             return True
     except Exception as e:
         logger.error(f"❌ Yedek API hatası: {e}")
