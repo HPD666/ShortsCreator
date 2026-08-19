@@ -23,10 +23,12 @@ jobs:
       - name: Bağımlılıkları Yükle
         run: |
           python -m pip install --upgrade pip
-          pip install gradio_client moviepy google-api-python-client google-auth-oauthlib google-auth-httplib2 requests yt-dlp
+          pip install gradio_client moviepy google-api-python-client google-auth-oauthlib google-auth-httplib2 requests yt-dlp google-genai
 
       - name: Botu Çalıştır
         env:
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
