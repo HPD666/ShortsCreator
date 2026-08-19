@@ -2,11 +2,15 @@ import os
 import sys
 import logging
 import tempfile
-import requests
-import urllib.parse
 from pathlib import Path
 
-from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
+from moviepy import (
+    TextClip,
+    ColorClip,
+    CompositeVideoClip,
+    AudioFileClip,
+    concatenate_videoclips
+)
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
@@ -34,22 +38,16 @@ OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="shorts-pipeline-"))
 
-# Sunucu bot engellerini (403 Forbidden) aşmak için tarayıcı kimlikleri
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,video/*,*/*;q=0.8'
-}
-
 def get_live_trend_prompts():
-    default_prompts = [
-        "3D Pixar style cute robot character moving and dancing, high quality, 9:16 vertical video",
-        "3D Pixar style cute robot character walking excitedly, high quality, 9:16 vertical video",
-        "3D Pixar style cute robot character waving hands and celebrating, high quality, 9:16 vertical video"
+    default_scenes = [
+        "🔥 DÜNYANIN EN İNANILMAZ 3D GERÇEĞİ!",
+        "🚀 TEKNOLOJİ YENİ BİR BOYUTA GEÇTİ!",
+        "💡 BU VİDEOYU SAKIN KAÇIRMA!"
     ]
     
     if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
-        logger.warning("Eksik API veya kütüphane. Varsayılan 3D konsept kullanılıyor.")
-        return default_prompts, "#shorts #3d #viral #trending"
+        logger.warning("Eksik API/kütüphane. Varsayılan sahneler kullanılıyor.")
+        return default_scenes, "#shorts #viral #trending"
 
     try:
         logger.info("🔥 YouTube Shorts trendleri çekiliyor...")
@@ -62,7 +60,7 @@ def get_live_trend_prompts():
         client = genai.Client(api_key=GEMINI_API_KEY)
         gemini_prompt = (
             f"YouTube Shorts trendleri: '{trend_context}'. "
-            "Bu trende uygun, hareket içeren 3D Pixar stilinde 3 farklı canlı video sahne tanımı (İngilizce T2V prompt) yaz. "
+            "Bu trende uygun, izleyicinin dikkatini çekecek Türkçe 3 kısa başlık/sahne metni yaz. "
             "Yanıtı aralarında '---' olacak şekilde ver."
         )
         
@@ -72,134 +70,69 @@ def get_live_trend_prompts():
             generated_prompts = [p.strip() for p in response.text.split('---') if p.strip()]
             if len(generated_prompts) >= 3:
                 clean_tag = titles[0][:15].replace(' ', '').replace('#', '')
-                logger.info("✅ Gemini 3.6 Flash ile trend promptları başarıyla oluşturuldu.")
+                logger.info("✅ Gemini 3.6 Flash ile trend metinleri başarıyla oluşturuldu.")
                 return generated_prompts[:3], f"#shorts #trending #{clean_tag}"
     except Exception as e:
         logger.warning(f"Trend çekme hatası: {e}")
         
-    return default_prompts, "#shorts #3d #viral"
+    return default_scenes, "#shorts #viral"
 
-def generate_pure_t2v(prompt: str, idx: int, output_path: Path) -> bool:
-    logger.info(f"🎬 Klip {idx+1} için video temin ediliyor...")
-    encoded_prompt = urllib.parse.quote(prompt)
-    
-    # 1. Deneme: Deneme amaçlı AI video uç noktaları
-    ai_urls = [
-        f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=video&width=576&height=1024&seed={idx+100}",
-        f"https://v3.fal.media/tokens/stream/video?prompt={encoded_prompt}&width=576&height=1024"
-    ]
+def create_local_scene_clip(text_content: str, idx: int, duration: float = 4.0) -> str:
+    """Dış internet bağlantısına gerek duymadan %100 yerel 9:16 Shorts klibi oluşturur."""
+    clip_path = TMP_DIR / f"local_clip_{idx}.mp4"
+    logger.info(f"🎬 Yerel Klip {idx+1} oluşturuluyor: '{text_content[:20]}...'")
 
-    for url in ai_urls:
-        try:
-            res = requests.get(url, headers=HEADERS, timeout=20, stream=True)
-            if res.status_code == 200:
-                c_type = res.headers.get('content-type', '').lower()
-                if 'video' in c_type or 'mp4' in c_type or 'octet-stream' in c_type:
-                    with open(output_path, "wb") as f:
-                        for chunk in res.iter_content(chunk_size=16384):
-                            f.write(chunk)
-                    if output_path.exists() and output_path.stat().st_size > 50000:
-                        logger.info(f"✅ Klip {idx+1} AI video servisinden indirildi.")
-                        return True
-        except Exception as e:
-            logger.warning(f"AI servis denenirken hata: {e}")
+    # Dinamik renk paleti (Gradient hissi veren renk kombinasyonları)
+    bg_colors = [(20, 20, 35), (35, 15, 25), (15, 30, 35)]
+    bg_color = bg_colors[idx % len(bg_colors)]
 
-    # 2. Deneme: %100 Erişilebilir, Yüksek Hızlı Google Cloud Direct MP4 CDN Kaynakları
-    logger.info(f"⚡ Klip {idx+1} için doğrudan HD MP4 indiriliyor...")
-    guaranteed_urls = [
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4"
-    ]
-    
-    fallback_url = guaranteed_urls[idx % len(guaranteed_urls)]
+    # 9:16 Shorts arka planı (576x1024)
+    bg_clip = ColorClip(size=(576, 1024), color=bg_color, duration=duration)
+
     try:
-        res = requests.get(fallback_url, headers=HEADERS, timeout=30)
-        if res.status_code == 200 and len(res.content) > 50000:
-            with open(output_path, "wb") as f:
-                f.write(res.content)
-            logger.info(f"✅ Klip {idx+1} HD MP4 olarak kaydedildi.")
-            return True
-        else:
-            logger.warning(f"Fallback HTTP Status: {res.status_code}")
+        # Metin Katmanı
+        txt_clip = TextClip(
+            text=text_content,
+            font_size=36,
+            color='white',
+            method='caption',
+            size=(500, 400)
+        ).with_duration(duration).with_position('center')
+
+        final_scene = CompositeVideoClip([bg_clip, txt_clip])
+        final_scene.write_videofile(
+            str(clip_path),
+            fps=24,
+            codec="libx264",
+            logger=None
+        )
+        logger.info(f"✅ Yerel Klip {idx+1} üretildi.")
+        return str(clip_path)
     except Exception as e:
-        logger.error(f"Klip indirme hatası: {e}")
-
-    return False
-
-def make_vertical(clip, target_w=576, target_h=1024):
-    """Videoyu dikey 9:16 Shorts formatına çevirir."""
-    scale = max(target_w / clip.w, target_h / clip.h)
-    
-    # MoviePy versiyon uyumluluğu
-    if hasattr(clip, 'resized'):
-        resized = clip.resized(scale)
-    elif hasattr(clip, 'resize'):
-        resized = clip.resize(scale)
-    else:
-        resized = clip
-
-    if hasattr(resized, 'cropped'):
-        cropped = resized.cropped(x_center=resized.w/2, y_center=resized.h/2, width=target_w, height=target_h)
-    elif hasattr(resized, 'crop'):
-        cropped = resized.crop(x_center=resized.w/2, y_center=resized.h/2, width=target_w, height=target_h)
-    else:
-        cropped = resized
-
-    return cropped
-
-def download_audio() -> str:
-    audio_path = TMP_DIR / "viral_audio.mp3"
-    pixabay_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
-    try:
-        res = requests.get(pixabay_url, headers=HEADERS, timeout=30)
-        if res.status_code == 200:
-            with open(audio_path, "wb") as f:
-                f.write(res.content)
-            logger.info("🎵 Arka plan müziği indirildi.")
-    except Exception as e:
-        logger.warning(f"Müzik indirilemedi: {e}")
-    return str(audio_path)
+        logger.warning(f"Metin katmanı oluşturulamadı, sade renk kullanılıyor: {e}")
+        bg_clip.write_videofile(str(clip_path), fps=24, codec="libx264", logger=None)
+        return str(clip_path)
 
 def main():
-    prompts, video_title = get_live_trend_prompts()
-    audio_path = download_audio()
+    scenes, video_title = get_live_trend_prompts()
     video_clips = []
 
-    for idx, prompt in enumerate(prompts):
-        clip_path = TMP_DIR / f"pure_clip_{idx}.mp4"
-        success = generate_pure_t2v(prompt, idx, clip_path)
-        
-        if success and clip_path.exists():
+    for idx, scene_text in enumerate(scenes):
+        clip_file = create_local_scene_clip(scene_text, idx)
+        if os.path.exists(clip_file):
             try:
-                clip = VideoFileClip(str(clip_path))
-                if clip.duration > 5:
-                    clip = clip.subclipped(0, 5)
-                # 9:16 Dikey kırpma
-                clip = make_vertical(clip, 576, 1024)
+                clip = VideoFileClip(clip_file)
                 video_clips.append(clip)
             except Exception as e:
-                logger.warning(f"Klip işleme hatası ({idx+1}): {e}")
+                logger.warning(f"Klip okunamadı: {e}")
 
     if not video_clips:
         logger.error("❌ Hiçbir video klibi oluşturulamadı. İşlem durduruluyor.")
         sys.exit(1)
 
     try:
-        logger.info("🎬 Videolar kurgulanıyor ve birleştiriliyor...")
+        logger.info("🎬 Klipler kurgulanıyor...")
         final_video = concatenate_videoclips(video_clips, method="compose")
-        
-        if os.path.exists(audio_path):
-            try:
-                audio_clip = AudioFileClip(audio_path)
-                if audio_clip.duration > final_video.duration:
-                    audio_clip = audio_clip.subclipped(0, final_video.duration)
-                final_video = final_video.with_audio(audio_clip)
-                logger.info("🔊 Müzik videoya bağlandı.")
-            except Exception as e:
-                logger.warning(f"Ses eklenemedi: {e}")
 
         output_path = OUT_DIR / "short_video.mp4"
         final_video.write_videofile(
@@ -209,10 +142,10 @@ def main():
             audio_codec="aac", 
             logger=None
         )
-        logger.info(f"✅ Final video üretildi: {output_path}")
+        logger.info(f"✅ Final video başarıyla üretildi: {output_path}")
 
         if os.path.exists('token.json'):
-            logger.info("🚀 YouTube'a yükleniyor...")
+            logger.info("🚀 YouTube Shorts'a yükleniyor...")
             creds = Credentials.from_authorized_user_file('token.json')
             youtube = build('youtube', 'v3', credentials=creds)
 
