@@ -13,7 +13,7 @@ from pathlib import Path
 sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
-from gtts import gTTS
+from gTTS import gTTS
 from moviepy import (
     ImageClip,
     TextClip,
@@ -28,7 +28,7 @@ from googleapiclient.http import MediaFileUpload
 import google.generativeai as genai
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("3d-ai-story")
+logger = logging.getLogger("3d-ai-comic-shorts")
 
 YT_API_KEY = os.environ.get("YT_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -80,7 +80,7 @@ def generate_story_with_gemini(trends):
     You are a viral YouTube Shorts scriptwriter and 3D animator.
     Analyze these trending topic titles: {json.dumps(trends)}
 
-    Create a funny, surprising, 4-scene story based on the most viral idea among these trends.
+    Create a funny, surprising, 4-scene comic-book style story based on the most viral idea among these trends.
     For each scene:
     1. 'text': A very short spoken sentence for voiceover (MAX 3 to 5 words per scene).
     2. 'prompt': A detailed 3D Pixar / Unreal Engine 5 animation prompt describing EXACTLY what is happening in 'text'. (Include parameters: 3D Pixar style, 8k render, vibrant lighting, highly detailed, no text on picture).
@@ -98,14 +98,12 @@ def generate_story_with_gemini(trends):
     Do not add any Markdown code blocks or extra explanations, output raw JSON only.
     """
 
-    # Eğer GEMINI_API_KEY tanımlıysa Gemini 1.5 Flash'ı kullan
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
             model = genai.GenerativeModel("gemini-1.5-flash")
             response = model.generate_content(prompt_instruction)
             raw_text = response.text.strip()
-            # Markdown temizliği
             raw_text = re.sub(r'```json\s*', '', raw_text)
             raw_text = re.sub(r'```\s*', '', raw_text)
             data = json.loads(raw_text)
@@ -114,7 +112,7 @@ def generate_story_with_gemini(trends):
         except Exception as e:
             logger.warning(f"⚠️ Gemini API hatası, yedek yapay zekaya geçiliyor: {e}")
 
-    # YEDEK YAPAY ZEKA (Pollinations Free Text LLM)
+    # YEDEK YAPAY ZEKA (Pollinations Free LLM)
     try:
         url = "https://text.pollinations.ai/"
         res = requests.post(url, json={"messages": [{"role": "user", "content": prompt_instruction}], "model": "openai"}, timeout=30)
