@@ -2,13 +2,13 @@ name: Daily AI Shorts Generator
 
 on:
   schedule:
-    - cron: '0 6 * * *' # Her gün saat 12:00 UTC'de otomatik çalışır
-  workflow_dispatch: # Actions sekmesinden elle tetikleme imkanı sağlar
+    - cron: '0 6  * * *'
+  workflow_dispatch:
 
 jobs:
   generate-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 180 # HF kuyruklarında sıra bekleme ihtimaline karşı 3 saatlik güvenli limit
+    timeout-minutes: 180
 
     steps:
       - name: Checkout Repository
