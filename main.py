@@ -126,12 +126,11 @@ def generate_story_with_gemini(trends, all_words):
     }}
     """
     
+    # Güncel ve desteklenen Gemini modelleri
     candidate_models = [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
-        "gemini-3.6-flash",
-        "gemini-flash-latest"
+        "gemini-2.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro-latest"
     ]
     
     genai.configure(api_key=GEMINI_API_KEY)
@@ -172,7 +171,7 @@ def fetch_text_to_video(prompt: str, index: int) -> str:
 
     public_spaces = [
         ("damo-vilab/modelscope-text-to-video-synthesis", None),
-        ("ByteDance/AnimateDiff-Lightning", "/generate")
+        ("ByteDance/AnimateDiff-Lightning", None)
     ]
 
     for space, api in public_spaces:
@@ -207,7 +206,7 @@ def fetch_text_to_video(prompt: str, index: int) -> str:
     except Exception as e:
         logger.warning(f"⚠️ Stok video indirilemedi: {e}")
 
-    # Saf Python ColorClip (Çökme %0 Garantili)
+    # Saf Python ColorClip (MoviePy 2.x Uyumlu)
     logger.warning("⚠️ Dinamik renk katmanı oluşturuluyor...")
     colors = [(25, 25, 50), (50, 15, 60), (15, 50, 60), (60, 25, 15)]
     color = colors[index % len(colors)]
@@ -234,12 +233,28 @@ def main():
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
 
-        # Video Formatlama
+        # Video Formatlama (MoviePy 2.x Uyumlu Boyutlandırma ve Kırpma)
         clip = VideoFileClip(raw_video_path)
-        clip = clip.resized(height=1920)
-        if clip.width < 1080:
-            clip = clip.resized(width=1080)
-        clip = clip.cropped(x_center=clip.width/2, y_center=clip.height/2, width=1080, height=1920)
+        w, h = clip.size
+
+        # Boyutlandırma: Yüksekliği 1920 olacak şekilde oranla
+        target_h = 1920
+        target_w = int(w * (target_h / h))
+        clip = clip.resized((target_w, target_h))
+
+        # Genişlik 1080'den küçükse genişliğe göre ölçekle
+        if clip.size[0] < 1080:
+            target_w = 1080
+            target_h = int(clip.size[1] * (target_w / clip.size[0]))
+            clip = clip.resized((target_w, target_h))
+
+        # 1080x1920 Dikey Formatı Sağlamak İçin Ortadan Kırp
+        clip = clip.cropped(
+            x_center=clip.size[0] / 2,
+            y_center=clip.size[1] / 2,
+            width=1080,
+            height=1920
+        )
 
         duration = max(clip.duration, audio_clip.duration)
         clip = clip.with_duration(duration)
