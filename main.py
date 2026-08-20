@@ -79,12 +79,10 @@ def extract_trend_video_data():
     for item in video_items:
         snippet = item.get('snippet', {})
         
-        # A) EKRANDA YAZAN YAZI (Video Başlığı)
         screen_text = snippet.get('title', '')
         screen_words = [w for w in screen_text.split() if not w.startswith('#')]
         clean_screen_text = " ".join(screen_words)
 
-        # B) AÇIKLAMADAKİ # İLE BAŞLAMAYAN KELİMELERİ SIRAYLA AL
         description = snippet.get('description', '')
         desc_words = [word for word in description.split() if not word.startswith('#')]
         clean_desc_text = " ".join(desc_words)
@@ -98,7 +96,7 @@ def extract_trend_video_data():
     return extracted_sentences, all_non_hashtag_words
 
 
-# 2. YEDEK PROGRAM (AI ÇALIŞMAZSA SAF KOD ALGORİTMASI DEVREYE GİRER)
+# 2. YEDEK PROGRAM (SAF PYTHON ALGORİTMASI)
 def programmatic_fallback_engine(all_words):
     logger.info("⚡ YEDEK PROGRAM DEVREDE: Saf Python algoritması senaryoyu oluşturuyor...")
     
@@ -123,29 +121,29 @@ def programmatic_fallback_engine(all_words):
     return scenes, title
 
 
-# 3. STABİL GEMINI AI MODEL SEÇİCİ
-def call_gemini_smart(prompt_instruction):
+# 3. GEMINI OMNI (1.5 FLASH / PRO) MODEL ÇAĞRICI
+def call_gemini_omni(prompt_instruction):
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # Yalnızca standart metin üretimi modellerini doğrudan hedefle
-    standard_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+    # Gemini Omni / Çok Modlu Ana Modeller
+    omni_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
 
-    for m_name in standard_models:
+    for m_name in omni_models:
         try:
-            logger.info(f"🧠 Gemini modeli deneniyor: {m_name}")
+            logger.info(f"🧠 Gemini Omni modeli çağrılıyor: {m_name}")
             model = genai.GenerativeModel(m_name)
             res = model.generate_content(prompt_instruction)
             if res and res.text:
                 return res.text
         except Exception as e:
-            logger.warning(f"⚠️ Model '{m_name}' atlandı: {e}")
+            logger.warning(f"⚠️ Model '{m_name}' yanıt vermedi: {e}")
 
-    raise RuntimeError("Hiçbir standart Gemini modeli yanıt vermedi.")
+    raise RuntimeError("Gemini Omni modelleri yanıt vermedi.")
 
 
 # 4. SENARYO OLUŞTURUCU
 def generate_story(extracted_sentences, all_words):
-    logger.info("🧠 AI ile senaryo oluşturuluyor...")
+    logger.info("🧠 AI Gemini Omni ile senaryo oluşturuluyor...")
     
     prompt_instruction = f"""
     You are an AI video producer. Here are extracted texts from trending videos:
@@ -170,7 +168,7 @@ def generate_story(extracted_sentences, all_words):
     }}
     """
     try:
-        response_text = call_gemini_smart(prompt_instruction)
+        response_text = call_gemini_omni(prompt_instruction)
         match = re.search(r'\{.*\}', response_text.strip(), re.DOTALL)
         if match:
             data = json.loads(match.group(0))
@@ -182,7 +180,7 @@ def generate_story(extracted_sentences, all_words):
         return programmatic_fallback_engine(all_words)
 
 
-# 5. GERÇEK VİDEO AI SERVİSLERİ (DÜZELTİLMİŞ CLIENT BAĞLANTISI)
+# 5. GERÇEK VİDEO AI SERVİSLERİ
 def fetch_real_video_ai(prompt: str, index: int) -> str:
     logger.info(f"🎥 Sahne #{index+1} için GERÇEK VİDEO AI çağrılıyor...")
 
@@ -196,10 +194,7 @@ def fetch_real_video_ai(prompt: str, index: int) -> str:
         for attempt in range(1, 3):
             try:
                 logger.info(f"⏳ [{attempt}/2] HF Video AI Kuyruğuna Giriliyor: '{space_name}'")
-                
-                # 'timeout' parametresi kaldırıldı, bağlantı hatası düzeltildi
                 client = Client(space_name)
-                
                 result = client.predict(prompt, api_name=api_endpoint)
                 if result and os.path.exists(str(result)):
                     logger.info(f"✅ GERÇEK VİDEO BAŞARIYLA ÜRETİLDİ: {space_name}")
@@ -222,7 +217,7 @@ def main():
         
         raw_video_path = fetch_real_video_ai(scene["prompt"], idx)
 
-        # Seslendirme (gTTS)
+        # Seslendirme (gTTS - küçük harf paketi)
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
