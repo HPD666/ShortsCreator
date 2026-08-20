@@ -3,7 +3,7 @@ import time
 import xml.etree.ElementTree as ET
 import requests
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import google.generativeai as genai
 from gtts import gTTS
 from moviepy.editor import AudioFileClip, VideoClip
@@ -12,6 +12,9 @@ from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+
+# --- YOUTUBE TAM YETKİ KAPSAMI (LIKE VE COMMENT İÇİN ŞART) ---
+SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 
 # --- GİTHUB SECRETS DOSYA DÖNÜŞTÜRÜCÜ ---
 if os.getenv("YOUTUBE_CLIENT_SECRET") and not os.path.exists("client_secret.json"):
@@ -31,7 +34,6 @@ def get_trending_topic():
     print("[1/5] Canlı ilginç konu/trend sorgulanıyor...")
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # 1. Deneme: Google Trends RSS
     try:
         url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
         res = requests.get(url, headers=headers, timeout=10)
@@ -45,7 +47,6 @@ def get_trending_topic():
     except Exception as e:
         print(f"Google Trends çekilemedi ({e}), AI canlı konu üretiyor...")
 
-    # 2. Deneme: %100 Dinamik Gemini AI Konu Üreteci (Hazır Liste Yok)
     try:
         model = genai.GenerativeModel('gemini-3.6-flash')
         prompt = (
@@ -80,7 +81,6 @@ def generate_britannica_fact(topic):
         return text
     except Exception as e:
         print(f"Gemini Fact Hatası: {e}")
-        # DİNAMİK YEDEK (Asla Hoover Dam vb. sabit başka isim içermez!)
         return f"The {topic} features some of the most extraordinary measurements in nature."
 
 def generate_dynamic_comment(topic, fact_text):
@@ -106,9 +106,13 @@ def generate_100pct_ai_video(prompt_text):
         return path
     raise Exception("Görsel üretilemedi.")
 
-# --- ALTYAZI VE DİNAMİK YAKINLAŞMA (ZOOM) EFEKTİ ---
+# --- ALTYAZI VE ORANTILI DİNAMİK ZOOM (YAMUK RESİM DÜZELTME) ---
 def add_subtitles_and_motion(image_path, text, duration):
-    base_img = Image.open(image_path).convert("RGB").resize((1080, 1920))
+    raw_img = Image.open(image_path).convert("RGB")
+    
+    # YAMUKLUĞU VE SÜNDÜRMEYİ ÖNLEYEN KRİTİK KISIM:
+    # ImageOps.fit görselin oranını bozmadan dikey 9:16 (1080x1920) alanına ortalayarak kırpar.
+    base_img = ImageOps.fit(raw_img, (1080, 1920), method=Image.Resampling.LANCZOS)
     
     draw = ImageDraw.Draw(base_img)
     try:
@@ -134,14 +138,13 @@ def add_subtitles_and_motion(image_path, text, duration):
         x = (1080 - w) // 2
         y = y_start + (i * 68)
         
-        # Siyah arka plan kutusu + parlak sarı metin
         draw.rectangle([x - 20, y - 5, x + w + 20, y + h + 10], fill=(0, 0, 0, 200))
         draw.text((x, y), line, font=font, fill=(255, 255, 0))
 
     img_np = np.array(base_img)
 
     def make_frame(t):
-        zoom = 1.0 + 0.12 * (t / duration)
+        zoom = 1.0 + 0.10 * (t / duration)
         h, w, _ = img_np.shape
         new_h, new_w = int(h / zoom), int(w / zoom)
         top = (h - new_h) // 2
@@ -159,10 +162,8 @@ def process_media(image_path, topic):
     audio_file = "voice.mp3"
     output_filename = "final_shorts.mp4"
     
-    # Gerçek Britannica Fact üretimi
     fact_text = generate_britannica_fact(topic)
     
-    # Yapay zeka seslendirmesi (gTTS)
     tts = gTTS(text=fact_text, lang='en', slow=False)
     tts.save(audio_file)
     
@@ -183,20 +184,20 @@ def process_media(image_path, topic):
     audio_clip.close()
     return output_filename, fact_text
 
-# --- 5. YOUTUBE OTHENTICATION ---
+# --- 5. YOUTUBE AUTHENTICATION (FORCE-SSL YETKİSİ İLE) ---
 def get_youtube_client():
     creds = None
     if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json')
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
     elif not creds or not creds.valid:
-        raise Exception("Geçerli token.json bulunamadı.")
+        raise Exception("Geçerli token.json bulunamadı veya yetkileri yetersiz.")
 
     return build('youtube', 'v3', credentials=creds)
 
-# --- 6. RETRY DESTEKLİ YÜKLEME, BEĞENİ VE YORUM İŞLEMİ ---
+# --- 6. TAM YETKİLİ OTOMATİK YÜKLEME, BEĞENİ VE YORUM ---
 def upload_and_interact(video_file, topic, fact_text):
     print("[4/5] YouTube Shorts'a yükleniyor...")
     youtube = get_youtube_client()
@@ -217,13 +218,13 @@ def upload_and_interact(video_file, topic, fact_text):
     media = MediaFileUpload(video_file, chunksize=-1, resumable=True)
     response = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media).execute()
     video_id = response['id']
-    print(f"BAŞARILI: Video Yüklendi! Video ID: {video_id}")
+    print(f"✅ BAŞARILI: Video Yüklendi! Video ID: {video_id}")
     
     # YouTube Sunucularının Videoyu Tam Indekslemesi İçin Bekleme Süresi
-    print("[5/5] Beğeni ve Yorum Hazırlığı (YouTube indekslemesi için 15 saniye bekleniyor)...")
-    time.sleep(15)
+    print("[5/5] Beğeni ve Yorum Hazırlığı (YouTube indekslemesi için 20 saniye bekleniyor)...")
+    time.sleep(20)
     
-    # RETRY TEKNİĞİ İLE OTOMATİK BEĞENİ
+    # RETRY + DETAYLI LOGLU OTOMATİK BEĞENİ
     for attempt in range(1, 4):
         try:
             print(f"Beğeni denemesi #{attempt}...")
@@ -231,13 +232,13 @@ def upload_and_interact(video_file, topic, fact_text):
             print("✅ Otomatik LIKE başarıyla atıldı!")
             break
         except HttpError as e:
-            print(f"⚠️ Beğeni API Uyarısı (Deneme {attempt}): {e}")
+            print(f"⚠️ Beğeni API Hatası (Deneme {attempt}): Status={e.resp.status}, Content={e.content}")
             time.sleep(5)
         except Exception as e:
             print(f"⚠️ Beğeni Hatası: {e}")
             break
 
-    # RETRY TEKNİĞİ İLE OTOMATİK YORUM
+    # RETRY + DETAYLI LOGLU OTOMATİK YORUM
     comment_text = generate_dynamic_comment(topic, fact_text)
     for attempt in range(1, 4):
         try:
@@ -258,7 +259,7 @@ def upload_and_interact(video_file, topic, fact_text):
             print(f"✅ Otomatik YORUM başarıyla atıldı: '{comment_text}'")
             break
         except HttpError as e:
-            print(f"⚠️ Yorum API Uyarısı (Deneme {attempt}): {e}")
+            print(f"⚠️ Yorum API Hatası (Deneme {attempt}): Status={e.resp.status}, Content={e.content}")
             time.sleep(5)
         except Exception as e:
             print(f"⚠️ Yorum Hatası: {e}")
