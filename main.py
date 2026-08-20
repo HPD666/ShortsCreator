@@ -30,7 +30,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("zero-cost-queue-auto")
+logger = logging.getLogger("pure-video-queue")
 
 # YouTube API Credentials
 YT_API_KEY = os.environ.get("YT_API_KEY")
@@ -48,7 +48,7 @@ if not YT_API_KEY:
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="free-auto-t2v-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="video-auto-t2v-"))
 
 
 # 1. LIVE YOUTUBE TREND EXTRACTION
@@ -98,51 +98,51 @@ def analyze_live_trends():
     return scenes, final_video_title
 
 
-# 2. ÜCRETSİZ HUGGING FACE PUBLIC GPU (KUYRUKTA BEKLEYEN MOTOR)
-def render_video_free_public_queue(prompt: str) -> str:
-    logger.info(f"⚡ HF Public GPU alanına bağlanılıyor: '{prompt[:35]}...'")
+# 2. SADECE GERÇEK VIDEO ÜRETEN SIRA BEKLEMELİ HF MOTORU
+def render_video_strict_queue(prompt: str) -> str:
+    logger.info(f"⚡ HF Public Video GPU alanına bağlanılıyor: '{prompt[:35]}...'")
     
-    # Herkese açık, auth istemeyen alternatif Text-To-Video Gradio alanları
+    # Herkese açık Text-To-Video Gradio alanları
     public_spaces = [
-        ("damo-vilab/text-to-video-ms-1.7b", "/predict"),
-        ("showlab/Show-1", "/generate_video")
+        "fffiloni/LTX-Video",
+        "KingNish/LTX-Video",
+        "ali-vilab/modelscope-text-to-video-synthesis"
     ]
 
-    for space, api_endpoint in public_spaces:
+    for space in public_spaces:
         try:
-            logger.info(f"⏳ [{space}] kuyruğuna istek gönderildi...")
+            logger.info(f"⏳ [{space}] alanına bağlanılıyor ve sıra alınıyor...")
             client = Client(space, verbose=False)
             
+            # Kuyruğa isteği bırak
             job = client.submit(
-                prompt,
-                api_name=api_endpoint
+                prompt=prompt,
+                negative_prompt="worst quality, low quality, blurry, deformed, static, image",
+                api_name="/generate_video" if "LTX" in space else "/predict"
             )
 
-            # Sıra bekleme döngüsü
             queue_timer = 0
             while not job.done():
                 time.sleep(15)
                 queue_timer += 15
                 if queue_timer % 30 == 0:
-                    logger.info(f"⏳ Kuyruk bekleniyor... ({queue_timer} saniye geçti)")
+                    logger.info(f"⏳ [{space}] Sunucu kuyruğu bekleniyor... ({queue_timer} saniye geçti)")
 
             result = job.result()
             video_path = result if isinstance(result, str) else result[0]
-            logger.info(f"✅ [{space}] kuyruğundan video hazır!")
-            return video_path
+            
+            # Üretilen dosyanın video formatında olduğundan emin ol
+            if str(video_path).lower().endswith(('.mp4', '.avi', '.mov', '.webm')):
+                logger.info(f"✅ [{space}] Gerçek AI video üretimi tamamlandı: {video_path}")
+                return video_path
+            else:
+                logger.warning(f"⚠️ [{space}] Video yerine farklı format döndürdü, sonraki alana geçiliyor.")
 
         except Exception as e:
-            logger.warning(f"⚠️ {space} sıra alınamadı veya meşgul: {e}")
+            logger.warning(f"⚠️ [{space}] alanında sıra beklenirken hata/meşguliyet: {e}")
             continue
 
-    # Tüm kuyruklar kilitliyse Pollinations yedek görsel motoru
-    logger.warning("⚠️ HF alanları yanıt vermedi, Pollinations motoru devreye giriyor.")
-    url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=704&height=480&model=flux"
-    img_data = requests.get(url).content
-    tmp_img = TMP_DIR / f"fallback_{time.time()}.jpg"
-    with open(tmp_img, "wb") as f:
-        f.write(img_data)
-    return str(tmp_img)
+    raise RuntimeError("❌ Tüm Hugging Face video alanları meşguldü veya sıra verilmedi. Video üretilemedi.")
 
 
 # 3. NİHAİ MONTAJ, YÜKLEME VE AUTO-LIKE
@@ -151,14 +151,11 @@ def main():
     video_clips = []
 
     for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Processing Clip {idx+1}/{len(scenes)}...")
-        generated_file = render_video_free_public_queue(scene["prompt"])
+        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} işleniyor...")
+        video_file_path = render_video_strict_queue(scene["prompt"])
         
-        if generated_file.endswith(".jpg"):
-            from moviepy import ImageClip
-            clip = ImageClip(generated_file).with_duration(3.0)
-        else:
-            clip = VideoFileClip(generated_file)
+        # Sadece gerçek video klip yüklenir
+        clip = VideoFileClip(video_file_path)
             
         # 🎬 9:16 VERTICAL CROP
         clip_resized = clip.resized(height=1920)
@@ -190,46 +187,49 @@ def main():
         sys.exit(1)
 
     try:
-        logger.info("🎬 Stitching video clips & finalizing MP4...")
+        logger.info("🎬 Video klips birleştiriliyor...")
         final_video = concatenate_videoclips(video_clips, method="compose")
         output_file = OUT_DIR / "short_video.mp4"
         final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
-        logger.info(f"✅ Final video saved: {output_file}")
+        logger.info(f"✅ Final video kaydedildi: {output_file}")
 
         # 🚀 YOUTUBE SHORTS UPLOAD & AUTO-LIKE
-        if os.path.exists('token.json'):
-            logger.info("🚀 Uploading to YouTube Shorts...")
-            creds = Credentials.from_authorized_user_file('token.json')
-            youtube = build('youtube', 'v3', credentials=creds)
+        if not os.path.exists('token.json'):
+            logger.error("❌ 'token.json' bulunamadı! Yükleme yapılamıyor.")
+            sys.exit(1)
 
-            body = {
-                'snippet': {
-                    'title': video_title,
-                    'description': f'{video_title}',
-                    'categoryId': '22'
-                },
-                'status': {
-                    'privacyStatus': 'public',
-                    'selfDeclaredMadeForKids': False,
-                    'containsSyntheticMedia': True
-                }
+        logger.info("🚀 YouTube Shorts'a yükleniyor...")
+        creds = Credentials.from_authorized_user_file('token.json')
+        youtube = build('youtube', 'v3', credentials=creds)
+
+        body = {
+            'snippet': {
+                'title': video_title,
+                'description': f'{video_title}',
+                'categoryId': '22'
+            },
+            'status': {
+                'privacyStatus': 'public',
+                'selfDeclaredMadeForKids': False,
+                'containsSyntheticMedia': True
             }
-            media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
-            
-            upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-            video_id = upload_response.get('id')
-            logger.info(f"🎉 Successfully uploaded! Video ID: {video_id}")
+        }
+        media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
+        
+        upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
+        video_id = upload_response.get('id')
+        logger.info(f"🎉 Başarıyla yüklendi! Video ID: {video_id}")
 
-            # AUTO-LIKE
-            if video_id:
-                try:
-                    youtube.videos().rate(id=video_id, rating='like').execute()
-                    logger.info("👍 Auto-liked successfully!")
-                except Exception as like_error:
-                    logger.warning(f"⚠️ Auto-like skipped: {like_error}")
+        # AUTO-LIKE
+        if video_id:
+            try:
+                youtube.videos().rate(id=video_id, rating='like').execute()
+                logger.info("👍 Otomatik beğenildi (Auto-liked)!")
+            except Exception as like_error:
+                logger.warning(f"⚠️ Auto-like adımı atlandı: {like_error}")
 
     except Exception as e:
-        logger.error(f"Render/Upload Error: {e}")
+        logger.error(f"Render/Upload Hatası: {e}")
         sys.exit(1)
 
 
