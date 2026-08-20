@@ -5,7 +5,7 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
-from moviepy.editor import VideoClip
+from moviepy.editor import AudioFileClip, VideoClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
@@ -72,7 +72,22 @@ def generate_100pct_ai_video(prompt_text):
         return path
     raise Exception("Görsel üretilemedi.")
 
-# --- EKRAN METNİ VE AKICI YAKINLAŞMA (SESSİZ - YOUTUBE TREND SESİ İÇİN) ---
+# --- OTOMATİK TREND ARKA PLAN MÜZİĞİ İNDİRİCİ ---
+def get_background_music():
+    print("Trend Arka Plan Müziği İndiriliyor...")
+    music_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3" # Enerjik Trend Beats
+    music_path = "bg_music.mp3"
+    try:
+        res = requests.get(music_url, timeout=15)
+        if res.status_code == 200:
+            with open(music_path, "wb") as f:
+                f.write(res.content)
+            return music_path
+    except Exception as e:
+        print(f"Müzik indirilemedi: {e}")
+    return None
+
+# --- EKRAN METNİ VE HAREKETLİ VİDEO İŞLEME ---
 def add_subtitles_and_motion(image_path, text, duration=12):
     base_img = Image.open(image_path).convert("RGB").resize((1080, 1920))
     
@@ -100,15 +115,13 @@ def add_subtitles_and_motion(image_path, text, duration=12):
         x = (1080 - w) // 2
         y = y_start + (i * 70)
         
-        # Siyah arka plan kutusu ve parlak sarı yazı
         draw.rectangle([x - 20, y - 5, x + w + 20, y + h + 10], fill=(0, 0, 0, 190))
         draw.text((x, y), line, font=font, fill=(255, 255, 0))
 
     img_np = np.array(base_img)
 
-    # Ken Burns (Zoom/Pan) Efekti
     def make_frame(t):
-        zoom = 1.0 + 0.10 * (t / duration) # %10 yumuşak yakınlaşma
+        zoom = 1.0 + 0.10 * (t / duration)
         h, w, _ = img_np.shape
         new_h, new_w = int(h / zoom), int(w / zoom)
         top = (h - new_h) // 2
@@ -120,20 +133,27 @@ def add_subtitles_and_motion(image_path, text, duration=12):
 
     return VideoClip(make_frame, duration=duration)
 
-# --- 3. MONTAJ (SESSİZ MP4 EXPORT) ---
+# --- 3. MONTAJ (VİDEO + MÜZİK) ---
 def process_media(image_path, topic):
-    print("[3/5] Dikey dinamik video ve ekran yazısı işleniyor...")
+    print("[3/5] Dikey dinamik video, altyazı ve müzik harmanlanıyor...")
     output_filename = "final_shorts.mp4"
     
     onscreen_text = generate_dynamic_text("onscreen", topic)
     print(f"Ekran Yazısı: '{onscreen_text}'")
     
-    # 12 Saniyelik Dinamik Sessiz Shorts Videosu
     video_clip = add_subtitles_and_motion(image_path, onscreen_text, duration=12)
-        
-    video_clip.write_videofile(
+    
+    bg_music_path = get_background_music()
+    if bg_music_path and os.path.exists(bg_music_path):
+        audio_clip = AudioFileClip(bg_music_path).subclip(0, 12)
+        final_clip = video_clip.set_audio(audio_clip)
+    else:
+        final_clip = video_clip
+
+    final_clip.write_videofile(
         output_filename, 
         codec='libx264',
+        audio_codec='aac',
         fps=30
     )
     
@@ -175,7 +195,7 @@ def upload_and_interact(video_file, topic):
     video_id = response['id']
     print(f"BAŞARILI: Video Yüklendi! Video ID: {video_id}")
     
-    # Otomatik Beğeni (Hata verirse aksaklık yaşanmaz)
+    # Oto-Beğeni
     print("[5/5] Beğeni ve Yorum İşlemi...")
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
@@ -183,7 +203,7 @@ def upload_and_interact(video_file, topic):
     except Exception as e:
         print(f"Beğeni uyarısı (Önemsiz): {e}")
 
-    # Otomatik Yorum
+    # Oto-Yorum
     try:
         comment_text = generate_dynamic_text("comment", topic)
         youtube.commentThreads().insert(
