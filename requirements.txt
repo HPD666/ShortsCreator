@@ -1,6 +1,7 @@
-modal
+replicate
 gTTS
-google-genai
+moviepy
 google-api-python-client
 google-auth-oauthlib
-moviepy
+google-auth-httplib2
+requests
