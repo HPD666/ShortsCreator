@@ -1,8 +1,9 @@
-gtts
-google-generativeai
-moviepy==2.1.1
-requests
-pillow
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
+huggingface_hub
+gradio_client
+requests
+pytrends
+gTTS
+moviepy
