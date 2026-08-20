@@ -3,12 +3,11 @@ import sys
 import time
 import re
 import json
-import random
 import logging
 import tempfile
-import urllib.parse
 import requests
 import warnings
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -22,6 +21,7 @@ from moviepy import (
     TextClip,
     AudioFileClip,
     CompositeVideoClip,
+    ColorClip,
     concatenate_videoclips
 )
 from googleapiclient.discovery import build
@@ -86,7 +86,7 @@ def extract_trend_video_data():
     return extracted_sentences, all_non_hashtag_words
 
 
-# 2. YEDEK PROGRAM SENARYOSU
+# 2. YEDEK KOD SENARYOSU
 def programmatic_fallback_engine(all_words):
     logger.info("⚡ YEDEK PROGRAM DEVREDE: Kod senaryosu oluşturuluyor...")
     clean_words = [re.sub(r'[^\w\s]', '', w) for w in all_words if len(w) > 2]
@@ -104,22 +104,14 @@ def programmatic_fallback_engine(all_words):
     return scenes, title
 
 
-# 3. GEMINI AI METİN ÜRETİCİ
+# 3. GEMINI AI METİN ÜRETİCİ (GÜNCEL MODEL İSİMLERİ)
 def call_gemini_smart(prompt_instruction):
     genai.configure(api_key=GEMINI_API_KEY)
-    valid_models = []
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                name = m.name.replace('models/', '')
-                if any(k in name for k in ['flash', 'pro']) and not any(x in name for x in ['research', 'computer']):
-                    valid_models.append(name)
-    except Exception:
-        pass
+    
+    # Standart ve çalışan güncel model isimleri
+    candidate_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
 
-    valid_models.extend(["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"])
-
-    for m_name in valid_models:
+    for m_name in candidate_models:
         try:
             logger.info(f"🧠 Gemini deneniyor: {m_name}")
             model = genai.GenerativeModel(m_name)
@@ -129,7 +121,7 @@ def call_gemini_smart(prompt_instruction):
         except Exception as e:
             logger.warning(f"⚠️ Gemini model uyarısı ({m_name}): {e}")
 
-    raise RuntimeError("Gemini yanıt vermedi.")
+    raise RuntimeError("Gemini modelleri yanıt vermedi.")
 
 
 # 4. SENARYO OLUŞTURUCU
@@ -165,43 +157,73 @@ def generate_story(extracted_sentences, all_words):
         return programmatic_fallback_engine(all_words)
 
 
-# 5. KESİNTİSİZ TEXT-TO-VIDEO AI MOTORU (ÇÖKME KORUMALI)
+# 5. DOSYA VE VİDEO DOĞRULAMA MEKANİZMASI
+def is_valid_video_file(filepath: str) -> bool:
+    if not os.path.exists(filepath) or os.path.getsize(filepath) < 100000:
+        return False
+    try:
+        clip = VideoFileClip(filepath)
+        valid = clip.duration is not None and clip.duration > 0
+        clip.close()
+        return valid
+    except Exception:
+        return False
+
+
+# 6. KESİNTİSİZ VİDEO OLUŞTURUCU
 def fetch_text_to_video(prompt: str, index: int) -> str:
     logger.info(f"🎥 Sahne #{index+1} için VIDEO AI çağrılıyor...")
 
-    # Sadece açık ve kamuya açık çalışan alanlar
+    # Hugging Face T2V Sunucuları
     public_spaces = [
-        "damo-vilab/modelscope-text-to-video-synthesis",
-        "ByteDance/AnimateDiff-Lightning"
+        ("damo-vilab/modelscope-text-to-video-synthesis", None),
+        ("ByteDance/AnimateDiff-Lightning", "/generate")
     ]
 
-    for space in public_spaces:
+    for space, api in public_spaces:
         try:
             logger.info(f"⏳ Text-to-Video deneniyor: '{space}'")
             client = Client(space)
-            res = client.predict(prompt)
-            if res and os.path.exists(str(res)):
+            res = client.predict(prompt, api_name=api) if api else client.predict(prompt)
+            
+            if res and is_valid_video_file(str(res)):
                 logger.info(f"✅ AI Video başarıyla üretildi: {space}")
                 return str(res)
         except Exception as e:
-            logger.warning(f"⚠️ Sunucu yanıt vermedi ({space}): {e}")
+            logger.warning(f"⚠️ Sunucu pasif veya uyumsuz ({space}): {e}")
 
-    # HF servisleri kapalı veya meşgulse akışın çökmemesi için hızlı alternatif video indirilir
-    logger.warning("⚠️ HF Video servisleri pasif. İşlemin 1 dakika içinde tamamlanması için hızlı video işleniyor...")
+    # Harici stok mp4 indirme denemesi (Doğrulamalı)
     backup_urls = [
-        "https://assets.mixkit.co/videos/download/mixkit-vertical-shot-of-a-neon-city-at-night-42217-medium.mp4",
-        "https://assets.mixkit.co/videos/download/mixkit-stars-in-the-night-sky-in-time-lapse-40019-medium.mp4",
-        "https://assets.mixkit.co/videos/download/mixkit-aerial-view-of-waves-crashing-on-the-beach-41525-medium.mp4",
-        "https://assets.mixkit.co/videos/download/mixkit-dramatic-clouds-and-sunset-in-the-sky-40899-medium.mp4"
+        "https://vjs.zencdn.net/v/oceans.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4"
     ]
-    out_file = TMP_DIR / f"fast_render_{index}.mp4"
-    r = requests.get(backup_urls[index % len(backup_urls)], timeout=15)
-    with open(out_file, 'wb') as f:
-        f.write(r.content)
+    
+    out_file = TMP_DIR / f"video_{index}.mp4"
+    try:
+        r = requests.get(backup_urls[index % len(backup_urls)], timeout=15, stream=True)
+        if r.status_code == 200:
+            with open(out_file, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024*1024):
+                    f.write(chunk)
+            if is_valid_video_file(str(out_file)):
+                return str(out_file)
+    except Exception as e:
+        logger.warning(f"⚠️ Stok video indirme başarısız: {e}")
+
+    # SAF PYTHON DİNAMİK ARKA PLAN (Sıfır Çökme Garantisi)
+    logger.warning("⚠️ Saf Python dinamik arka plan oluşturuluyor (Çökme Engellendi)...")
+    colors = [(20, 20, 40), (40, 10, 50), (10, 40, 50), (50, 20, 10)]
+    color = colors[index % len(colors)]
+    
+    fallback_clip = ColorClip(size=(1080, 1920), color=color).with_duration(4)
+    fallback_clip.write_videofile(str(out_file), fps=24, codec="libx264", logger=None)
+    fallback_clip.close()
     return str(out_file)
 
 
-# 6. MONTAJ VE YOUTUBE SHORTS YÜKLEME
+# 7. MONTAJ VE YOUTUBE SHORTS YÜKLEME
 def main():
     extracted_sentences, all_words = extract_trend_video_data()
     scenes, video_title = generate_story(extracted_sentences, all_words)
