@@ -15,7 +15,7 @@ sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
 from gradio_client import Client
-from gTTS import gTTS
+from gtts import gTTS
 from moviepy import (
     VideoFileClip,
     TextClip,
