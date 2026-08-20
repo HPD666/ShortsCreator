@@ -3,7 +3,6 @@ import sys
 import time
 import re
 import json
-import random
 import logging
 import tempfile
 import requests
@@ -101,10 +100,10 @@ def programmatic_fallback_engine(all_words):
 
     chunk_size = max(3, len(clean_words) // 4)
     scenes = [
-        {"text": " ".join(clean_words[0:chunk_size])[:30], "prompt": f"cinematic vertical video of {clean_words[0]}, 8k, realistic"},
-        {"text": " ".join(clean_words[chunk_size:chunk_size*2])[:30], "prompt": f"action dramatic vertical video of {clean_words[1]}, 8k, realistic"},
-        {"text": " ".join(clean_words[chunk_size*2:chunk_size*3])[:30], "prompt": f"aesthetic vertical video of {clean_words[2]}, 8k, realistic"},
-        {"text": " ".join(clean_words[chunk_size*3:chunk_size*4])[:30], "prompt": f"epic climax vertical video of {clean_words[3]}, 8k, realistic"}
+        {"text": " ".join(clean_words[0:chunk_size])[:30], "prompt": f"cinematic video of {clean_words[0]}, 8k"},
+        {"text": " ".join(clean_words[chunk_size:chunk_size*2])[:30], "prompt": f"action video of {clean_words[1]}, 8k"},
+        {"text": " ".join(clean_words[chunk_size*2:chunk_size*3])[:30], "prompt": f"aesthetic video of {clean_words[2]}, 8k"},
+        {"text": " ".join(clean_words[chunk_size*3:chunk_size*4])[:30], "prompt": f"epic climax video of {clean_words[3]}, 8k"}
     ]
     title = f"{clean_words[0].capitalize()} {clean_words[1].capitalize()} #trend #viral"
     return scenes, title
@@ -171,42 +170,52 @@ def generate_story(extracted_sentences, all_words):
         return programmatic_fallback_engine(all_words)
 
 
-# 5. SAF TEXT-TO-VIDEO AI MOTORU (DİNAMİK GRADIO ÇAĞRISI)
-def fetch_pure_text_to_video_ai(prompt: str, index: int) -> str:
-    logger.info(f"🎥 Sahne #{index+1} için SAF TEXT-TO-VIDEO AI çağrılıyor...")
+# 5. KESİNTİSİZ TEXT-TO-VIDEO MOTORU
+def fetch_text_to_video(prompt: str, index: int) -> str:
+    logger.info(f"🎥 Sahne #{index+1} için TEXT-TO-VIDEO AI çağrılıyor...")
 
-    # Aktif çalışan Text-To-Video AI sunucu listesi
-    video_spaces = [
-        "THUDM/CogVideoX-5B-Space",
-        "CiroGarcía/ZeroScope_v2_dark",
-        "fffiloni/zeroscope",
-        "KingNish/Video-Generator"
+    # Halka açık ve çalışan aktif video alanları
+    public_spaces = [
+        "damo-vilab/modelscope-text-to-video-synthesis",
+        "multimodalart/cosmo-1-video",
+        "ByteDance/AnimateDiff-Lightning"
     ]
 
-    for space in video_spaces:
-        for attempt in range(1, 3):
+    for space in public_spaces:
+        try:
+            logger.info(f"⏳ Video AI deneniyor: '{space}'")
+            client = Client(space)
+            
+            # Dinamik tahmin çağrısı
+            res = None
             try:
-                logger.info(f"⏳ [{attempt}/2] Text-To-Video deneniyor: '{space}'")
-                client = Client(space)
-                
-                # Dinamik olarak sunucunun API yapısını saptama ve çalıştırma
+                res = client.predict(prompt)
+            except Exception:
                 try:
-                    result = client.predict(prompt, api_name="/predict")
+                    res = client.predict(prompt, api_name="/predict")
                 except Exception:
-                    try:
-                        result = client.predict(prompt, api_name="/generate")
-                    except Exception:
-                        result = client.predict(prompt)
+                    pass
 
-                if result and os.path.exists(str(result)):
-                    logger.info(f"✅ GERÇEK TEXT-TO-VIDEO BAŞARIYLA ÜRETİLDİ: {space}")
-                    return str(result)
+            if res and os.path.exists(str(res)):
+                logger.info(f"✅ Video başarıyla üretildi: {space}")
+                return str(res)
+        except Exception as e:
+            logger.warning(f"⚠️ Space pasif veya kapalı ({space}): {e}")
 
-            except Exception as e:
-                logger.warning(f"⚠️ Sunucu meşgul ({space}): {e}")
-                time.sleep(5)
-
-    raise RuntimeError(f"❌ Sahne #{index+1} için tüm Text-to-Video AI sunucuları meşguldü. Lütfen tekrar çalıştırın.")
+    # HF servisleri kapalıysa otomatik dinamik render indirici (İşlemin yarıda kalmaması için)
+    logger.warning("⚠️ HF Video servisleri yanıt vermedi. Anlık yayın için yedek video akışı çekiliyor...")
+    backup_urls = [
+        "https://assets.mixkit.co/videos/download/mixkit-vertical-shot-of-a-neon-city-at-night-42217-medium.mp4",
+        "https://assets.mixkit.co/videos/download/mixkit-stars-in-the-night-sky-in-time-lapse-40019-medium.mp4",
+        "https://assets.mixkit.co/videos/download/mixkit-aerial-view-of-waves-crashing-on-the-beach-41525-medium.mp4",
+        "https://assets.mixkit.co/videos/download/mixkit-dramatic-clouds-and-sunset-in-the-sky-40899-medium.mp4"
+    ]
+    target_url = backup_urls[index % len(backup_urls)]
+    out_file = TMP_DIR / f"fast_render_{index}.mp4"
+    r = requests.get(target_url, timeout=20)
+    with open(out_file, 'wb') as f:
+        f.write(r.content)
+    return str(out_file)
 
 
 # 6. MONTAJ VE YOUTUBE SHORTS YÜKLEME
@@ -218,15 +227,14 @@ def main():
     for idx, scene in enumerate(scenes):
         logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} hazırlanıyor: '{scene['text']}'")
         
-        # Sadece gerçek Text-to-Video yapay zekası kullanılır
-        raw_video_path = fetch_pure_text_to_video_ai(scene["prompt"], idx)
+        raw_video_path = fetch_text_to_video(scene["prompt"], idx)
 
         # Seslendirme
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
 
-        # Video Dikey (9:16) Ayarları
+        # Video Dikey Formatlama
         clip = VideoFileClip(raw_video_path)
         clip = clip.resized(height=1920)
         if clip.width < 1080:
@@ -251,12 +259,12 @@ def main():
         composite = CompositeVideoClip([clip, txt_clip], size=(1080, 1920)).with_audio(audio_clip)
         video_clips.append(composite)
 
-    logger.info("🎬 Shorts Bütünleştiriliyor...")
+    logger.info("🎬 Video Birleştiriliyor...")
     final_video = concatenate_videoclips(video_clips, method="compose")
     output_file = OUT_DIR / "short_video.mp4"
     final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
 
-    # YouTube Otomatik Yükleme
+    # YouTube Yükleme
     if not os.path.exists('token.json'):
         logger.error("❌ 'token.json' bulunamadı.")
         sys.exit(1)
@@ -280,15 +288,15 @@ def main():
 
     upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
     video_id = upload_response.get('id')
-    logger.info(f"🎉 Video Başarıyla Yüklendi! ID: {video_id}")
+    logger.info(f"🎉 Video Yüklendi! ID: {video_id}")
 
     if video_id:
-        time.sleep(15)
+        time.sleep(10)
         try:
             youtube.videos().rate(id=video_id, rating='like').execute()
             logger.info("👍 Otomatik beğenildi.")
-        except Exception as e:
-            logger.warning(f"⚠️ Beğeni eklenemedi: {e}")
+        except Exception:
+            pass
 
         try:
             comment_body = {
@@ -301,8 +309,8 @@ def main():
             }
             youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
             logger.info("💬 Otomatik yorum eklendi.")
-        except Exception as e:
-            logger.warning(f"⚠️ Yorum eklenemedi: {e}")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
