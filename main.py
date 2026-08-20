@@ -103,7 +103,7 @@ def programmatic_fallback_engine(all_words):
     return scenes, title
 
 
-# 3. GEMINI AI SENARYO ÜRETİCİSİ (STABİL MODEL SEÇİCİ)
+# 3. GEMINI AI SENARYO ÜRETİCİSİ
 def generate_story_with_gemini(trends, all_words):
     logger.info("🧠 Gemini AI trendleri analiz ediyor ve %100 özgün senaryo üretiyor...")
     
@@ -126,7 +126,6 @@ def generate_story_with_gemini(trends, all_words):
     }}
     """
     
-    # Kullanımdan kalkan (2.5-flash) veya beta/preview modeller filtreli liste
     candidate_models = [
         "gemini-1.5-flash",
         "gemini-1.5-pro",
