@@ -1,4 +1,4 @@
-replicate
+gradio_client
 gTTS
 moviepy
 google-api-python-client
