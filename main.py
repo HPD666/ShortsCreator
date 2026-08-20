@@ -8,15 +8,15 @@ import requests
 import warnings
 from pathlib import Path
 
-# Unbuffered stdout for live progress streaming in CI/CD logs
+# Stream logs continuously in GitHub Actions
 sys.stdout.reconfigure(line_buffering=True)
 
-# HTTP and SDK warning suppression
+# Suppress unnecessary SDK warnings
 warnings.filterwarnings("ignore")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-import replicate
+from gradio_client import Client
 from gtts import gTTS
 from moviepy import (
     VideoFileClip,
@@ -30,10 +30,9 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("cloud-t2v-creator")
+logger = logging.getLogger("zero-cost-full-auto")
 
-# Secrets and OAuth Token Management
-REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
+# Credentials & Tokens Check
 YT_API_KEY = os.environ.get("YT_API_KEY")
 
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
@@ -41,19 +40,20 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
         with open('token.json', 'w') as f:
             f.write(os.environ['TOKEN_JSON'])
     except Exception as e:
-        logger.warning(f"token.json could not be written: {e}")
+        logger.warning(f"token.json yazılamadı: {e}")
 
-if not REPLICATE_API_TOKEN or not YT_API_KEY:
-    logger.error("❌ REPLICATE_API_TOKEN and YT_API_KEY are required!")
+if not YT_API_KEY:
+    logger.error("❌ YT_API_KEY zorunludur!")
     sys.exit(1)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-t2v-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="free-auto-t2v-"))
 
 
-def analyze_live_trends_for_t2v():
-    logger.info("🔥 YouTube trend keywords fetching...")
+# 1. CANLI YOUTUBE TREND ANALİZİ
+def analyze_live_trends():
+    logger.info("🔥 Live YouTube Shorts trends fetching...")
     extracted_keywords = []
     
     try:
@@ -73,7 +73,7 @@ def analyze_live_trends_for_t2v():
             words = [w for w in clean_title.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'http', 'https', 'with']]
             extracted_keywords.extend(words)
     except Exception as e:
-        logger.warning(f"⚠️ YouTube API warning: {e}")
+        logger.warning(f"⚠️ YouTube API uyarısı: {e}")
 
     unique_words = list(dict.fromkeys(extracted_keywords))[:4]
     trend_phrase = " ".join(unique_words).title() if unique_words else "Epic Extreme Action"
@@ -81,11 +81,11 @@ def analyze_live_trends_for_t2v():
 
     scenes = [
         {
-            "prompt": "Cinematic 8k photorealistic action movie scene, real person performing extreme movement, 35mm film style",
+            "prompt": "Cinematic photorealistic dynamic action shot of a real person performing an extreme stunt, 8k movie scene",
             "text": "EPIC ACTION"
         },
         {
-            "prompt": "Hyper-realistic slow motion cinematic video of a person completing viral skill stunt, photorealistic textures",
+            "prompt": "Hyper-realistic slow motion video of a professional athlete completing a viral challenge, 4k resolution",
             "text": "UNREAL SKILL"
         },
         {
@@ -98,42 +98,63 @@ def analyze_live_trends_for_t2v():
     return scenes, final_video_title
 
 
-def render_video_cloud(prompt: str) -> str:
-    logger.info(f"⚡ Replicate LTX-Video cloud render launching: '{prompt[:35]}...'")
+# 2. ÜCRETSİZ HUGGING FACE GPU (KUYRUK DESTEKLİ)
+def render_video_free_queue(prompt: str) -> str:
+    logger.info(f"⚡ Hugging Face GPU kuyruğuna giriliyor: '{prompt[:35]}...'")
     
-    output = replicate.run(
-        "lightricks/ltx-video:3b8b1d9c15849887b003b544321dd022b467b7e3ba6ef5d233cfed1d943b1f14",
-        input={
-            "prompt": prompt,
-            "negative_prompt": "cartoon, low quality, anime, worst quality, deformed, ugly",
-            "width": 704,
-            "height": 480,
-            "num_frames": 121,
-            "frame_rate": 25
-        }
-    )
+    # 0$ LTX Video Hugging Face Alanı
+    space_name = "Lightricks/LTX-Video-Demo"
     
-    video_url = output if isinstance(output, str) else output[0]
-    
-    local_path = TMP_DIR / f"clip_{time.time()}.mp4"
-    r = requests.get(video_url, stream=True)
-    with open(local_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
+    try:
+        client = Client(space_name, verbose=False)
+        
+        # Submit ile istek atıp kuyruğu sabırla bekler
+        job = client.submit(
+            prompt=prompt,
+            negative_prompt="worst quality, low quality, anime, cartoon, deformed, blurry",
+            height=480,
+            width=704,
+            num_frames=121,
+            frame_rate=25,
+            api_name="/generate_video_1"
+        )
+        
+        logger.info("⏳ Hugging Face ücretsiz sunucu kuyruğu bekleniyor (Bu işlem birkaç dakika sürebilir)...")
+        
+        while not job.done():
+            time.sleep(10)
             
-    return str(local_path)
+        result = job.result()
+        video_path = result if isinstance(result, str) else result[0]
+        logger.info("✅ Hugging Face kuyruğundan video başarıyla çekildi!")
+        return video_path
+
+    except Exception as e:
+        logger.warning(f"⚠️ HF Space yoğun veya yanıt vermedi, ücretsiz Pollinations motoruna geçiliyor: {e}")
+        # Ücretsiz fallback görsel-video akışı
+        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=704&height=480&model=flux"
+        img_data = requests.get(url).content
+        tmp_img = TMP_DIR / f"fallback_{time.time()}.jpg"
+        with open(tmp_img, "wb") as f:
+            f.write(img_data)
+        return str(tmp_img)
 
 
+# 3. NİHAİ MONTAJ, YÜKLEME VE OTOMATİK BEĞENİ
 def main():
-    scenes, video_title = analyze_live_trends_for_t2v()
+    scenes, video_title = analyze_live_trends()
     video_clips = []
 
     for idx, scene in enumerate(scenes):
         logger.info(f"🎬 Processing Clip {idx+1}/{len(scenes)}...")
-        video_file_path = render_video_cloud(scene["prompt"])
+        generated_file = render_video_free_queue(scene["prompt"])
         
-        clip = VideoFileClip(video_file_path)
-        
+        if generated_file.endswith(".jpg"):
+            from moviepy import ImageClip
+            clip = ImageClip(generated_file).with_duration(3.0)
+        else:
+            clip = VideoFileClip(generated_file)
+            
         # 🎬 9:16 VERTICAL CROP
         clip_resized = clip.resized(height=1920)
         vertical_clip = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
@@ -160,7 +181,7 @@ def main():
         video_clips.append(composite)
 
     if not video_clips:
-        logger.error("❌ No video clips were processed.")
+        logger.error("❌ Hiçbir video klibi işlenemedi.")
         sys.exit(1)
 
     try:
@@ -170,7 +191,7 @@ def main():
         final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
         logger.info(f"✅ Final video saved: {output_file}")
 
-        # 🚀 YOUTUBE UPLOAD & AUTO-LIKE
+        # 🚀 YOUTUBE SHORTS UPLOAD & AUTOMATIC LIKE
         if os.path.exists('token.json'):
             logger.info("🚀 Uploading to YouTube Shorts...")
             creds = Credentials.from_authorized_user_file('token.json')
@@ -194,10 +215,11 @@ def main():
             video_id = upload_response.get('id')
             logger.info(f"🎉 Successfully uploaded! Video ID: {video_id}")
 
+            # AUTOMATIC LIKE
             if video_id:
                 try:
                     youtube.videos().rate(id=video_id, rating='like').execute()
-                    logger.info("👍 Auto-liked!")
+                    logger.info("👍 Auto-liked successfully!")
                 except Exception as like_error:
                     logger.warning(f"⚠️ Auto-like skipped: {like_error}")
 
