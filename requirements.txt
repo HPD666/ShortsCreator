@@ -1,8 +1,7 @@
-gtts
 google-generativeai
-moviepy==2.1.1
-requests
-pillow
+gTTS
+moviepy
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
+requests
