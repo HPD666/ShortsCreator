@@ -1,10 +1,10 @@
 import os
+import time
 import xml.etree.ElementTree as ET
 import requests
 import google.generativeai as genai
-from gradio_client import Client
 from gtts import gTTS
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy.editor import ImageClip, AudioFileClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -61,54 +61,28 @@ def get_trending_topic():
 
     raise Exception("Canlı veri kaynağı bulunamadı.")
 
-# --- 2. SIFIRDAN AI VİDEO ÜRETİMİ (GÜNCEL / AÇIK KULLANIMLI SPACE) ---
+# --- 2. SIFIRDAN AI MATERYAL ÜRETİMİ (KESİNTİSİZ VE JETONSUZ) ---
 def generate_100pct_ai_video(prompt_text):
-    print(f"[2/5] Trend Konu ('{prompt_text}') için sıfırdan AI Video üretiliyor...")
+    print(f"[2/5] Trend Konu ('{prompt_text}') için sıfırdan AI görsel materyali üretiliyor...")
     
-    # HF Token gerektirmeyen güncel açık kaynak T2V modeli
-    spaces = [
-        "fffilimonov/Text-to-Video",
-        "multimodalart/modelscope-tv"
-    ]
+    encoded_prompt = requests.utils.quote(prompt_text)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&model=flux&seed={int(time.time())}"
     
-    for space in spaces:
-        try:
-            print(f"Denenen AI Model Space: {space}")
-            client = Client(space)
-            result = client.predict(prompt_text, api_name="/predict")
-            
-            if isinstance(result, dict):
-                video_path = result.get('video') or result.get('name') or list(result.values())[0]
-            elif isinstance(result, (list, tuple)):
-                video_path = result[0]
-            else:
-                video_path = result
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 200:
+            image_path = "generated_image.jpg"
+            with open(image_path, "wb") as f:
+                f.write(response.content)
+            print(f"AI Görsel Materyali Oluşturuldu: {image_path}")
+            return image_path
+    except Exception as e:
+        print(f"AI Üretim Hatası: {e}")
 
-            if video_path and os.path.exists(video_path):
-                print(f"Geçici Video Oluşturuldu: {video_path}")
-                return video_path
-        except Exception as e:
-            print(f"{space} alanında hata: {e}")
-            continue
+    raise Exception("AI Görsel/Video üretimi başarısız oldu.")
 
-    raise Exception("Aktif AI Video servisi yanıt vermedi.")
-
-# --- 3. 9:16 DİKEY FORMAT VE SES MONTAJI ---
-def format_to_916(clip, target_w=1080, target_h=1920):
-    target_ratio = target_w / target_h
-    w, h = clip.size
-    current_ratio = w / h
-
-    if current_ratio > target_ratio:
-        new_w = int(h * target_ratio)
-        clip = clip.crop(x_center=w/2, width=new_w)
-    else:
-        new_h = int(w / target_ratio)
-        clip = clip.crop(y_center=h/2, height=new_h)
-
-    return clip.resize((target_w, target_h))
-
-def process_media(video_path, topic):
+# --- 3. 9:16 DİKEY SHORTS KANALI VE SES MONTAJI ---
+def process_media(image_path, topic):
     print("[3/5] Dikey kadraj ve dinamik seslendirme işleniyor...")
     audio_file = "voice.mp3"
     output_filename = "final_shorts.mp4"
@@ -119,15 +93,11 @@ def process_media(video_path, topic):
     tts = gTTS(text=script_text, lang='en', slow=False)
     tts.save(audio_file)
     
-    video_clip = VideoFileClip(video_path)
     audio_clip = AudioFileClip(audio_file)
     
-    video_clip = format_to_916(video_clip, 1080, 1920)
-    
-    if video_clip.duration < audio_clip.duration:
-        final_clip = video_clip.loop(duration=audio_clip.duration).set_audio(audio_clip)
-    else:
-        final_clip = video_clip.set_duration(audio_clip.duration).set_audio(audio_clip)
+    # Görseli dikey 9:16 Shorts videosuna dönüştürür
+    video_clip = ImageClip(image_path).set_duration(audio_clip.duration)
+    final_clip = video_clip.set_audio(audio_clip)
         
     final_clip.write_videofile(
         output_filename, 
@@ -207,12 +177,12 @@ def upload_and_interact(video_file, topic):
 # --- AKIŞ BAŞLATICI ---
 if __name__ == "__main__":
     trend = get_trending_topic()
-    prompt = f"cinematic vertical footage of {trend}, 8k render, photorealistic"
+    prompt = f"cinematic vertical footage of {trend}, 8k render, photorealistic, trending topic"
     
-    generated_video = generate_100pct_ai_video(prompt)
+    generated_media = generate_100pct_ai_video(prompt)
     
-    if generated_video and os.path.exists(generated_video):
-        final_file = process_media(generated_video, trend)
+    if generated_media and os.path.exists(generated_media):
+        final_file = process_media(generated_media, trend)
         upload_and_interact(final_file, trend)
     else:
-        raise Exception("Geçerli video üretilemedi.")
+        raise Exception("Geçerli materyal üretilemedi.")
