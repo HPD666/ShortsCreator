@@ -8,15 +8,16 @@ import logging
 import tempfile
 import requests
 import warnings
-import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
+from gradio_client import Client
 from gtts import gTTS
 from moviepy import (
-    ImageClip,
+    VideoFileClip,
     TextClip,
     AudioFileClip,
     CompositeVideoClip,
@@ -25,11 +26,10 @@ from moviepy import (
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-
 import google.generativeai as genai
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("real-ai-shorts")
+logger = logging.getLogger("trend-viral-bot")
 
 YT_API_KEY = os.environ.get("YT_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -38,205 +38,206 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
         with open('token.json', 'w') as f:
             f.write(os.environ['TOKEN_JSON'])
+        logger.info("🔑 token.json hazırlandı.")
     except Exception as e:
-        logger.warning(f"token.json okunamadı: {e}")
+        logger.warning(f"⚠️ token.json uyarısı: {e}")
 
-if not YT_API_KEY:
-    logger.error("❌ YT_API_KEY zorunludur!")
+if not YT_API_KEY or not GEMINI_API_KEY:
+    logger.error("❌ YT_API_KEY ve GEMINI_API_KEY zorunludur!")
     sys.exit(1)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="3d-ai-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="trend-viral-shorts-"))
 
 
-# 1. YOUTUBE TRENDLERİNİ GERÇEK ZAMANLI ÇEKME
-def fetch_youtube_trends():
-    logger.info("🔍 Güncel YouTube Shorts trendleri ve viral konular çekiliyor...")
-    titles = []
-    queries = ['viral shorts challenge 2026', 'unbelievable life hack trending', 'mind blowing technology shorts', 'satisfying scientific experiment']
-    q = random.choice(queries)
+# 1. TREND VİDEOLARI İZLEME VE METİN VERİLERİNİ ÇEKME
+def extract_trend_video_data():
+    logger.info("🔍 Trend videolar izleniyor, açıklamalar ve ekran yazıları taranıyor...")
     
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
+    
+    video_items = []
     try:
-        youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
         res = youtube.search().list(
-            q=q,
+            q='#shorts #trend #viral',
             type='video',
             videoDuration='short',
+            publishedAfter=seven_days_ago,
             order='viewCount',
-            maxResults=8,
+            maxResults=10,
             part='snippet'
         ).execute()
-
-        for item in res.get('items', []):
-            titles.append(item['snippet']['title'])
+        video_items = res.get('items', [])
     except Exception as e:
-        logger.warning(f"⚠️ YouTube API okuma uyarısı: {e}")
+        logger.warning(f"⚠️ Trend arama uyarısı: {e}")
 
-    return titles if titles else ["Unbelievable Tech Gadgets", "Mind Blowing Physics Hacks", "Future AI Secrets"]
+    extracted_sentences = []
+    all_non_hashtag_words = []
+
+    for item in video_items:
+        snippet = item.get('snippet', {})
+        
+        # A) EKRANDA YAZAN YAZI (Video Başlığı)
+        screen_text = snippet.get('title', '')
+        screen_words = [w for w in screen_text.split() if not w.startswith('#')]
+        clean_screen_text = " ".join(screen_words)
+
+        # B) AÇIKLAMADAKİ # İLE BAŞLAMAYAN KELİMELERİ SIRAYLA AL
+        description = snippet.get('description', '')
+        desc_words = [word for word in description.split() if not word.startswith('#')]
+        clean_desc_text = " ".join(desc_words)
+
+        # Kelimeleri listeye ekle
+        all_non_hashtag_words.extend(desc_words)
+        
+        combined_text = f"Ekran Yazısı: {clean_screen_text} | Açıklama: {clean_desc_text}"
+        extracted_sentences.append(combined_text)
+
+    logger.info(f"📊 Toplam {len(all_non_hashtag_words)} adet # ile başlamayan kelime sırayla toplandı.")
+    return extracted_sentences, all_non_hashtag_words
 
 
-# 2. GEMINI VEYA YEDEK AI İLE %100 DİNAMİK & GERÇEKÇİ SENARYO ÜRETİMİ
-def generate_story_with_gemini(trends):
-    logger.info("🧠 AI trendleri analiz ediyor ve gerçekçi viral senaryo yazıyor...")
+# 2. YEDEK PROGRAM (AI / COPILOT ÇALIŞMAZSA DEVREYE GİREN SAF PYTHON KODU)
+def programmatic_fallback_engine(all_words):
+    logger.info("⚡ YEDEK PROGRAM DEVREDE: AI çalışmadığı için saf kod (program) senaryoyu üretiyor...")
     
-    prompt_instruction = f"""
-    You are an expert viral YouTube Shorts content creator.
-    Analyze these trending topic titles: {json.dumps(trends)}
+    # Kelimeleri temizle ve birleştir
+    clean_words = [re.sub(r'[^\w\s]', '', w) for w in all_words if len(w) > 2]
+    if len(clean_words) < 16:
+        clean_words = ["viral", "trending", "amazing", "watch", "this", "moment", "incredible", "secret", "mindblowing", "today", "popular", "shorts", "video", "content", "best", "trend"]
 
-    Create a realistic, intriguing, 4-scene short story/fact based on these trends.
-    Style MUST be realistic, cinematic, and captivating (NOT cartoon/Pixar).
+    # Sırayla alınan kelimeleri 4 sahneye böl
+    chunk_size = max(3, len(clean_words) // 4)
+    scene1_text = " ".join(clean_words[0:chunk_size])[:30]
+    scene2_text = " ".join(clean_words[chunk_size:chunk_size*2])[:30]
+    scene3_text = " ".join(clean_words[chunk_size*2:chunk_size*3])[:30]
+    scene4_text = " ".join(clean_words[chunk_size*3:chunk_size*4])[:30]
 
-    For each scene:
-    1. 'text': A catchy spoken sentence for voiceover (MAX 4 to 6 words per scene).
-    2. 'prompt': A detailed photorealistic image prompt describing the scene. (Include: photorealistic, 8k resolution, cinematic lighting, shot on 35mm lens, highly detailed, vertical 9:16 aspect ratio, no text or overlays).
+    scenes = [
+        {"text": scene1_text, "prompt": f"cinematic moving shot of {scene1_text}, photorealistic 8k vertical video"},
+        {"text": scene2_text, "prompt": f"cinematic dynamic scene of {scene2_text}, photorealistic 8k vertical video"},
+        {"text": scene3_text, "prompt": f"cinematic action scene of {scene3_text}, photorealistic 8k vertical video"},
+        {"text": scene4_text, "prompt": f"cinematic dramatic climax of {scene4_text}, photorealistic 8k vertical video"}
+    ]
+    
+    title = f"{clean_words[0].capitalize()} {clean_words[1].capitalize()} #trend #viral"
+    return scenes, title
 
-    Return ONLY a valid JSON object formatted exactly like this:
-    {{
-      "title": "Viral Catchy Title with #shorts #viral #trending",
-      "scenes": [
-        {{"text": "Spoken text scene 1", "prompt": "Photorealistic prompt scene 1"}},
-        {{"text": "Spoken text scene 2", "prompt": "Photorealistic prompt scene 2"}},
-        {{"text": "Spoken text scene 3", "prompt": "Photorealistic prompt scene 3"}},
-        {{"text": "Spoken text scene 4", "prompt": "Photorealistic prompt scene 4"}}
-      ]
-    }}
-    Do not add markdown formatting or extra text outside JSON.
-    """
 
-    data = None
+# 3. SENARYO OLUŞTURUCU (ÖNCE AI DENER, BAŞARISIZ OLURSA YEDEK PROGRAMA GEÇER)
+def generate_story(extracted_sentences, all_words):
+    logger.info("🧠 AI ile senaryo oluşturuluyor...")
+    
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel("gemini-1.5-flash")
 
-    # GEMINI DENEMESİ
-    if GEMINI_API_KEY:
+        prompt_instruction = f"""
+        You are an AI video producer. Here are extracted texts from trending videos (On-screen text and description non-hashtag words in order):
+        {json.dumps(extracted_sentences[:5])}
+
+        Create a 4-scene viral script based strictly on these trend inputs.
+        
+        RULES:
+        - Spoken sentence in each scene MUST be 4 to 6 words maximum.
+        - Video prompts must describe dynamic cinematic moving 8k vertical 9:16 scenes.
+        - Title MUST ONLY use hashtags #trend #viral. Do NOT use weekly trend words.
+
+        Return ONLY a JSON:
+        {{
+          "title": "Catchy Title #trend #viral",
+          "scenes": [
+            {{"text": "Short spoken sentence 1", "prompt": "Dynamic moving cinematic text-to-video scene 1"}},
+            {{"text": "Short spoken sentence 2", "prompt": "Dynamic moving cinematic text-to-video scene 2"}},
+            {{"text": "Short spoken sentence 3", "prompt": "Dynamic moving cinematic text-to-video scene 3"}},
+            {{"text": "Short spoken sentence 4", "prompt": "Dynamic moving cinematic text-to-video scene 4"}}
+          ]
+        }}
+        """
+
+        response = model.generate_content(prompt_instruction)
+        match = re.search(r'\{.*\}', response.text.strip(), re.DOTALL)
+        if match:
+            data = json.loads(match.group(0))
+            return data["scenes"], data.get("title", "Trending Shorts #trend #viral")
+        else:
+            raise ValueError("AI geçerli JSON üretmedi.")
+
+    except Exception as e:
+        logger.warning(f"⚠️ AI / Copilot çalışmadı ({e}). Yedek Program (Kod Algoritması) tetikleniyor...")
+        return programmatic_fallback_engine(all_words)
+
+
+# 4. HUGGING FACE İLE GERÇEK AI VİDEO ÜRETİMİ (SIRA BEKLEMELİ)
+def fetch_hf_real_video(prompt: str, index: int) -> str:
+    logger.info(f"🎥 Sahne #{index+1} için Hugging Face üzerinden GERÇEK VİDEO üretiliyor...")
+    logger.info("⏳ Hugging Face GPU kuyruğuna girildi (Sıra bekleniyor)...")
+
+    hf_spaces = [
+        ("damo-vilab/modelscope-text-to-video-synthesis", "/predict"),
+        ("fffiloni/CogVideoX-5B-Space", "/generate")
+    ]
+
+    for space_name, api_endpoint in hf_spaces:
         try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            
-            # Dinamik Model Seçimi (404 önleme)
-            selected_model_name = 'gemini-1.5-flash'
-            try:
-                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                for candidate in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-2.0-flash']:
-                    if candidate in available_models:
-                        selected_model_name = candidate
-                        break
-            except Exception:
-                pass
-
-            model = genai.GenerativeModel(selected_model_name)
-            response = model.generate_content(prompt_instruction)
-            raw_text = response.text.strip()
-            
-            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-            if match:
-                data = json.loads(match.group(0))
-                logger.info("✅ Gemini AI Özgün Senaryoyu Başarıyla Oluşturdu!")
+            client = Client(space_name)
+            result = client.predict(prompt, api_name=api_endpoint)
+            if result and os.path.exists(str(result)):
+                return str(result)
         except Exception as e:
-            logger.warning(f"⚠️ Gemini API Hatası: {e}")
+            logger.warning(f"⚠️ Hugging Face meşgul/sıra bekleniyor: {e}")
 
-    # YEDEK POLLINATIONS LLM DENEMESİ
-    if not data or "scenes" not in data:
-        try:
-            logger.info("🔄 Yedek AI motoruna bağlanılıyor...")
-            url = "https://text.pollinations.ai/"
-            res = requests.post(url, json={"messages": [{"role": "user", "content": prompt_instruction}], "model": "openai"}, timeout=30)
-            raw_text = res.text.strip()
-            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-            if match:
-                data = json.loads(match.group(0))
-                logger.info("✅ Yedek AI Özgün Senaryoyu Oluşturdu!")
-        except Exception as e:
-            logger.warning(f"⚠️ Yedek AI Hatası: {e}")
-
-    # DİNAMİK YEDEK MOTORU (ASLA MYStery BOX TEKRARI YAPMAZ!)
-    if not data or "scenes" not in data or len(data.get("scenes", [])) < 4:
-        logger.info("🎲 Tamamen dinamik rastgele viral içerik motoru devreye giriyor...")
-        topics = [
-            ("The Secret AI Gadget", "This invisible device changes everything.", "It scans objects in real time.", "You can control it with mind.", "The future is already here!"),
-            ("Deep Ocean Mystery", "Scientists found something glowing underwater.", "It responded to sound waves.", "A strange light burst forth.", "We are not alone down there."),
-            ("Quantum Physics Hack", "This simple trick defies gravity.", "Light splits into infinite beams.", "Objects float in mid air.", "Reality is an illusion!"),
-            ("Futuristic Supercars", "Engineers built a transparent engine.", "It runs purely on water.", "Top speed reaches unbelievable limits.", "Transportation changed forever.")
-        ]
-        chosen = random.choice(topics)
-        data = {
-            "title": f"{chosen[0]} 😱 #shorts #viral #trending #facts",
-            "scenes": [
-                {"text": chosen[1], "prompt": f"Photorealistic cinematic image of {chosen[0]}, 8k resolution, ultra detailed, 9:16 vertical, shot on 35mm lens, no text"},
-                {"text": chosen[2], "prompt": f"Hyper-detailed close up photo representing {chosen[0]}, futuristic atmosphere, dramatic lighting, 9:16 vertical, no text"},
-                {"text": chosen[3], "prompt": f"Photorealistic wide shot of {chosen[0]} in action, neon glowing reflections, 8k render, 9:16 vertical, no text"},
-                {"text": chosen[4], "prompt": f"High resolution realistic photography of {chosen[0]} finale, epic background, studio quality, 9:16 vertical, no text"}
-            ]
-        }
-
-    return data["scenes"], data.get("title", "Unbelievable Viral Shorts #shorts #viral")
+    raise RuntimeError("❌ Hugging Face video üretimi zaman aşımına uğradı.")
 
 
-# 3. GERÇEKÇİ GÖRSEL ÜRETME (POLLINATIONS FLUX / TURBO MOTORU)
-def generate_3d_image(prompt: str, index: int) -> str:
-    output_path = TMP_DIR / f"scene_{index}.jpg"
-    logger.info(f"🎨 Sahne #{index+1} Gerçekçi AI Görseli Çiziliyor...")
-
-    encoded_p = urllib.parse.quote(prompt)
-    seed = random.randint(100000, 999999)
-    # model=flux kullanarak hyper-realistic sonuçlar elde ediyoruz
-    image_url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=flux&seed={seed}&nologo=true"
-
-    response = requests.get(image_url, timeout=90)
-    if response.status_code == 200:
-        with open(output_path, 'wb') as f:
-            f.write(response.content)
-        logger.info(f"✅ Gerçekçi Görsel Oluşturuldu: {output_path}")
-        return str(output_path)
-    else:
-        # Görsel servisinde sorun olursa alternatif turbo motorunu dener
-        image_url_alt = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=turbo&seed={seed}&nologo=true"
-        response_alt = requests.get(image_url_alt, timeout=90)
-        if response_alt.status_code == 200:
-            with open(output_path, 'wb') as f:
-                f.write(response_alt.content)
-            return str(output_path)
-        raise RuntimeError(f"❌ Görsel Motoru Yanıt Vermedi (Status: {response.status_code})")
-
-
-# 4. SES, ALTYAZI VE VİDEO KURGUSU (1080x1920 TAM EKRAN SHORTS)
+# 5. MONTAJ VE YOUTUBE'A YÜKLEME
 def main():
-    trends = fetch_youtube_trends()
-    scenes, video_title = generate_story_with_gemini(trends)
+    extracted_sentences, all_words = extract_trend_video_data()
+    scenes, video_title = generate_story(extracted_sentences, all_words)
     video_clips = []
 
     for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)}: '{scene['text']}'")
-        image_file = generate_3d_image(scene["prompt"], idx)
+        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} hazırlanıyor: '{scene['text']}'")
+        raw_video_path = fetch_hf_real_video(scene["prompt"], idx)
 
-        # Seslendirme (gTTS)
+        # Ücretsiz Seslendirme (gTTS)
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
-        
-        duration = max(3.0, audio_clip.duration + 0.5)
 
-        # Görseli tam 1080x1920 boyutuna oturtma
-        img_clip = ImageClip(image_file).resized((1080, 1920)).with_duration(duration)
+        # Video Kurgusu (9:16 Dikey Düzeltme)
+        clip = VideoFileClip(raw_video_path)
+        clip = clip.resized(height=1920)
+        if clip.width < 1080:
+            clip = clip.resized(width=1080)
+        clip = clip.cropped(x_center=clip.width/2, y_center=clip.height/2, width=1080, height=1920)
 
-        # Ekrandan Taşmayan, Okunabilir Şık Sarı Altyazı
+        duration = max(clip.duration, audio_clip.duration)
+        clip = clip.with_duration(duration)
+
+        # Sarı Altyazı
         txt_clip = TextClip(
             text=scene["text"],
             font="DejaVuSans-Bold",
-            font_size=42,
+            font_size=38,
             color='yellow',
             stroke_color='black',
             stroke_width=4,
             method='caption',
-            size=(900, 180)
-        ).with_duration(duration).with_position(('center', 0.82), relative=True)
+            size=(920, 200)
+        ).with_duration(duration).with_position(('center', 0.80), relative=True)
 
-        composite = CompositeVideoClip([img_clip, txt_clip], size=(1080, 1920)).with_audio(audio_clip)
+        composite = CompositeVideoClip([clip, txt_clip], size=(1080, 1920)).with_audio(audio_clip)
         video_clips.append(composite)
 
-    logger.info("🎬 Yapay Zeka Videosu İşleniyor...")
+    logger.info("🎬 Shorts Videosu Birleştiriliyor...")
     final_video = concatenate_videoclips(video_clips, method="compose")
     output_file = OUT_DIR / "short_video.mp4"
     final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
 
+    # YouTube Otomatik Yükleme
     if not os.path.exists('token.json'):
         logger.error("❌ 'token.json' bulunamadı.")
         sys.exit(1)
@@ -246,38 +247,44 @@ def main():
     youtube = build('youtube', 'v3', credentials=creds)
 
     body = {
-        'snippet': {'title': video_title, 'description': f"{video_title}\n\n#shorts #viral #trending #facts #ai"},
-        'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False, 'containsSyntheticMedia': True}
+        'snippet': {
+            'title': video_title,
+            'description': f"{video_title}\n\n#trend #viral"
+        },
+        'status': {
+            'privacyStatus': 'public',
+            'selfDeclaredMadeForKids': False,
+            'containsSyntheticMedia': True
+        }
     }
     media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
-    
+
     upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
     video_id = upload_response.get('id')
-    logger.info(f"🎉 Başarıyla yüklendi! Video ID: {video_id}")
+    logger.info(f"🎉 Video Yüklendi! ID: {video_id}")
 
-    # OTOMATİK LİKE VE YORUM
+    # Otomatik Beğeni ve Sabitlenmiş Yorum
     if video_id:
+        time.sleep(20)
         try:
             youtube.videos().rate(id=video_id, rating='like').execute()
-            logger.info("👍 Video otomatik beğenildi!")
+            logger.info("👍 Otomatik beğenildi!")
         except Exception as e:
-            logger.warning(f"⚠️ Beğeni uyarısı: {e}")
+            logger.warning(f"⚠️ Auto-like uyarısı: {e}")
 
         try:
             comment_body = {
                 'snippet': {
                     'videoId': video_id,
                     'topLevelComment': {
-                        'snippet': {
-                            'textOriginal': 'Subscribe and turn on notifications for more daily shorts! 🔔'
-                        }
+                        'snippet': {'textOriginal': '🔔 Subscribe for daily trend shorts! #trend #viral'}
                     }
                 }
             }
             youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-            logger.info("💬 Otomatik yorum sabitlendi!")
+            logger.info("💬 Otomatik yorum eklendi!")
         except Exception as e:
-            logger.warning(f"⚠️ Yorum uyarısı: {e}")
+            logger.warning(f"⚠️ Auto-comment uyarısı: {e}")
 
 
 if __name__ == "__main__":
