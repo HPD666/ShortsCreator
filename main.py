@@ -1,6 +1,5 @@
 import os
 import time
-import random
 import xml.etree.ElementTree as ET
 import requests
 import numpy as np
@@ -27,47 +26,12 @@ if os.getenv("TOKEN_JSON") and not os.path.exists("token.json"):
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- BRITANNICA TARZI SOMUT BİLGİ ÜRETİCİSİ ---
-def generate_britannica_fact(topic):
-    model = genai.GenerativeModel('gemini-3.6-flash')
-    
-    prompt = (
-        f"You are a Britannica encyclopedia expert. Generate 1 mind-blowing, 100% true, "
-        f"concrete fun fact about '{topic}' (or a famous world marvel/science phenomenon related to it). "
-        f"MUST include specific numbers, measurements, dates, or scale comparisons (like 'Hoover dam contains 3.25M cubic yards of concrete'). "
-        f"DO NOT use vague buzzwords like 'this tech', 'future', or generic news. "
-        f"Keep it to 15-20 words max for YouTube Shorts narration."
-    )
-    
-    try:
-        response = model.generate_content(prompt)
-        text = response.text.strip().replace('"', '')
-        print(f"[Üretilen Gerçek Bilgi]: {text}")
-        return text
-    except Exception as e:
-        print(f"Gemini Hata: {e}")
-        return f"The Hoover Dam contains over 3.25 million cubic yards of concrete."
-
-def generate_dynamic_comment(topic, fact_text):
-    model = genai.GenerativeModel('gemini-3.6-flash')
-    prompt = f"Write a 1-sentence engaging question for YouTube viewers about this fact: '{fact_text}'."
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip().replace('"', '')
-    except Exception as e:
-        return f"Did you know this mind-blowing fact about {topic}?"
-
-# --- 1. CANLI TREND VE BİLGİ KONUSU TESPİTİ ---
+# --- 1. FULL AI TREND VE KONU TESPİTİ (SABİT LİSTE YOK) ---
 def get_trending_topic():
     print("[1/5] Canlı ilginç konu/trend sorgulanıyor...")
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    fallback_topics = [
-        "Hoover Dam", "Great Pyramid of Giza", "Mariana Trench", 
-        "International Space Station", "Amazon Rainforest", "Mount Everest", 
-        "Saturn's Rings", "Panama Canal", "Colosseum of Rome"
-    ]
-    
+    # 1. Deneme: Google Trends RSS
     try:
         url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
         res = requests.get(url, headers=headers, timeout=10)
@@ -76,16 +40,59 @@ def get_trending_topic():
             items = root.findall('.//item/title')
             if items and items[0].text:
                 topic = items[0].text
-                print(f"Trend Konu Bulundu: {topic}")
+                print(f"Google Trends Konusu: {topic}")
                 return topic
     except Exception as e:
-        print(f"Google Trends Hata: {e}")
-        
-    selected = random.choice(fallback_topics)
-    print(f"Seçilen Bilgi Konusu: {selected}")
-    return selected
+        print(f"Google Trends çekilemedi ({e}), AI canlı konu üretiyor...")
 
-# --- 2. AI GÖRSEL ÜRETİMİ ---
+    # 2. Deneme: %100 Dinamik Gemini AI Konu Üreteci (Hazır Liste Yok)
+    try:
+        model = genai.GenerativeModel('gemini-3.6-flash')
+        prompt = (
+            "Give me 1 single fascinating real-world subject (a famous landmark, natural wonder, "
+            "deep sea marvel, or space object). Return ONLY the subject name. "
+            "Do NOT include punctuation, numbers, or extra words."
+        )
+        response = model.generate_content(prompt)
+        topic = response.text.strip().replace('"', '').replace('.', '')
+        print(f"Gemini AI Tarafından Üretilen Canlı Konu: {topic}")
+        return topic
+    except Exception as e:
+        print(f"AI Konu Üretim Hatası: {e}")
+        return "The Sun"
+
+# --- 2. DİNAMİK BRITANNICA FACT (SADECE SEÇİLEN KONU HAKKINDA) ---
+def generate_britannica_fact(topic):
+    model = genai.GenerativeModel('gemini-3.6-flash')
+    
+    prompt = (
+        f"You are a Britannica encyclopedia expert. Generate 1 mind-blowing, 100% true, "
+        f"concrete fun fact EXCLUSIVELY about '{topic}'. "
+        f"MUST include specific numbers, measurements, dates, or scale comparisons related ONLY to {topic}. "
+        f"CRITICAL: Do NOT mention any other landmark or unrelated entity. "
+        f"Keep it to 15-20 words max for YouTube Shorts narration."
+    )
+    
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.strip().replace('"', '')
+        print(f"[{topic} Hakkında Gerçek Bilgi]: {text}")
+        return text
+    except Exception as e:
+        print(f"Gemini Fact Hatası: {e}")
+        # DİNAMİK YEDEK (Asla Hoover Dam vb. sabit başka isim içermez!)
+        return f"The {topic} features some of the most extraordinary measurements in nature."
+
+def generate_dynamic_comment(topic, fact_text):
+    model = genai.GenerativeModel('gemini-3.6-flash')
+    prompt = f"Write a 1-sentence engaging question for YouTube viewers specifically about this fact on '{topic}': '{fact_text}'."
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip().replace('"', '')
+    except Exception as e:
+        return f"Did you know this fascinating detail about {topic}?"
+
+# --- 3. AI GÖRSEL ÜRETİMİ ---
 def generate_100pct_ai_video(prompt_text):
     print(f"[2/5] Yüksek çözünürlüklü AI görsel üretiliyor: '{prompt_text}'...")
     encoded = requests.utils.quote(prompt_text)
@@ -146,7 +153,7 @@ def add_subtitles_and_motion(image_path, text, duration):
 
     return VideoClip(make_frame, duration=duration)
 
-# --- 3. MONTAJ VE AI SESLENDİRME ---
+# --- 4. MONTAJ VE AI SESLENDİRME ---
 def process_media(image_path, topic):
     print("[3/5] Dikey video, AI seslendirmesi ve altyazı montajlanıyor...")
     audio_file = "voice.mp3"
@@ -176,7 +183,7 @@ def process_media(image_path, topic):
     audio_clip.close()
     return output_filename, fact_text
 
-# --- 4. YOUTUBE OTHENTICATION ---
+# --- 5. YOUTUBE OTHENTICATION ---
 def get_youtube_client():
     creds = None
     if os.path.exists('token.json'):
@@ -189,17 +196,17 @@ def get_youtube_client():
 
     return build('youtube', 'v3', credentials=creds)
 
-# --- 5. RETRY DESTEKLİ YÜKLEME, BEĞENİ VE YORUM İŞLEMİ ---
+# --- 6. RETRY DESTEKLİ YÜKLEME, BEĞENİ VE YORUM İŞLEMİ ---
 def upload_and_interact(video_file, topic, fact_text):
     print("[4/5] YouTube Shorts'a yükleniyor...")
     youtube = get_youtube_client()
     
     body = {
         'snippet': {
-            'title': f"{topic} - Did You Know? 🤯 #Shorts #Facts #Viral #didyouknow #funfacts #fact #factoftheday",
+            'title': f"{topic} - Did You Know? 🤯 #Shorts #Facts #Viral",
             'description': f"Mind-blowing encyclopedic fact about {topic}: {fact_text}",
             'tags': [topic, 'Facts', 'Shorts', 'Viral', 'Trivia'],
-            'categoryId': '27' # Education
+            'categoryId': '27'
         },
         'status': {
             'privacyStatus': 'public',
@@ -212,7 +219,7 @@ def upload_and_interact(video_file, topic, fact_text):
     video_id = response['id']
     print(f"BAŞARILI: Video Yüklendi! Video ID: {video_id}")
     
-    # YENİ TEKNİK: YouTube Sunucularının Videoyu Indekslemesi İçin Bekleme Süresi
+    # YouTube Sunucularının Videoyu Tam Indekslemesi İçin Bekleme Süresi
     print("[5/5] Beğeni ve Yorum Hazırlığı (YouTube indekslemesi için 15 saniye bekleniyor)...")
     time.sleep(15)
     
