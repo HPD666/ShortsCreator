@@ -37,16 +37,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. PRE-DOWNLOAD MODEL WEIGHTS DIRECTLY INTO MODAL CONTAINER IMAGE
+# 1. SAFE PRE-DOWNLOAD USING SNAPSHOT_DOWNLOAD (NO RAM OOM DURING BUILD)
 def download_ltx_model():
-    import torch
-    from diffusers import LTXPipeline
-    print("📦 Pre-downloading LTX-Video weights into Modal Image layer...")
-    LTXPipeline.from_pretrained(
-        "Lightricks/LTX-Video",
-        torch_dtype=torch.bfloat16
+    from huggingface_hub import snapshot_download
+    print("📦 Pre-downloading LTX-Video raw weights into Modal Image layer...", flush=True)
+    snapshot_download(
+        repo_id="Lightricks/LTX-Video",
+        allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model"]
     )
-    print("✅ Model weights baked into image successfully!")
+    print("✅ Model weights cached in image layer successfully!", flush=True)
 
 
 modal_image = (
@@ -58,7 +57,8 @@ modal_image = (
         "torch",
         "sentencepiece",
         "imageio-ffmpeg",
-        "hf-transfer"
+        "hf-transfer",
+        "huggingface_hub"
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
     .run_function(download_ltx_model)
@@ -67,24 +67,23 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. ULTRA-FAST GPU RENDERER USING PRE-CACHED MODEL
-@app.cls(gpu="a10g", cpu=4.0, memory=24576, timeout=600, retries=0)
+# 2. BULLETPROOF GPU RENDERER USING PRE-CACHED WEIGHTS
+@app.cls(gpu="a10g", cpu=4.0, memory=24576, timeout=1200, retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
         import torch
         from diffusers import LTXPipeline
 
-        print("⚡ Loading LTX-Video from local cached layer...", flush=True)
+        print("⚡ Loading LTX-Video from pre-cached image layer...", flush=True)
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
-            torch_dtype=torch.bfloat16,
-            local_files_only=True
+            torch_dtype=torch.bfloat16
         )
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
-        print("✅ Container ready in seconds!", flush=True)
+        print("✅ Container loaded and ready instantly!", flush=True)
 
     @modal.method()
     def render_all(self, prompts: list) -> list:
