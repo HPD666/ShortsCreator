@@ -8,10 +8,7 @@ import requests
 import warnings
 from pathlib import Path
 
-# Stream logs live in GitHub Actions
 sys.stdout.reconfigure(line_buffering=True)
-
-# Suppress HTTP and SDK noise
 warnings.filterwarnings("ignore")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -30,17 +27,17 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("pure-dynamic-auto")
+logger = logging.getLogger("context-aware-t2v")
 
-# YouTube API Credentials
 YT_API_KEY = os.environ.get("YT_API_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
         with open('token.json', 'w') as f:
             f.write(os.environ['TOKEN_JSON'])
     except Exception as e:
-        logger.warning(f"token.json yazılamadı: {e}")
+        logger.warning(f"token.json okunamadı: {e}")
 
 if not YT_API_KEY:
     logger.error("❌ YT_API_KEY zorunludur!")
@@ -48,18 +45,20 @@ if not YT_API_KEY:
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="video-auto-t2v-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-video-"))
 
 
-# 1. DİNAMİK TREND TRACKER & PROMPT LOADER (%100 CANLI VERİ)
-def analyze_and_build_dynamic_content():
-    logger.info("🔥 Live YouTube Shorts Trend Tracker çalıştırılıyor...")
-    extracted_titles = []
+# 1. TREND VİDEOLARIN İÇERİĞİNİ BİREBİR ANALİZ EDEN MOTOR
+def extract_topic_and_generate_prompts():
+    logger.info("🔥 YouTube trend videolarının konusu ve detayları analiz ediliyor...")
     
+    extracted_context = []
+    video_titles = []
+
     try:
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
         res = youtube.search().list(
-            q='viral shorts challenge trending',
+            q='viral shorts trending',
             type='video',
             videoDuration='short',
             order='viewCount',
@@ -68,107 +67,106 @@ def analyze_and_build_dynamic_content():
         ).execute()
         
         for item in res.get('items', []):
-            raw_title = item['snippet']['title']
-            clean_title = re.sub(r'[^\w\s]', '', raw_title)
-            if clean_title.strip():
-                extracted_titles.append(clean_title.strip())
+            title = item['snippet']['title']
+            description = item['snippet'].get('description', '')
+            video_titles.append(title)
+            
+            # Başlık ve açıklamayı temizleyip ana konuyu çıkarır
+            combined = f"{title} {description}"
+            clean_text = re.sub(r'[^\w\s]', '', combined)
+            words = [w for w in clean_text.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'youtube', 'http', 'https', 'subscribe', 'channel']]
+            extracted_context.extend(words)
+            
     except Exception as e:
-        logger.warning(f"⚠️ YouTube API uyarısı: {e}")
+        logger.warning(f"⚠️ YouTube API analiz hatası: {e}")
 
-    # Trend verisi yoksa dinamik güvenlik kelimeleri oluştur
-    main_topic = extracted_titles[0] if extracted_titles else "Viral Action Stunt"
-    words = [w.upper() for w in main_topic.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'http', 'https', 'with']]
+    # En çok geçen trend konu kelimeleri
+    unique_words = list(dict.fromkeys(extracted_context))
+    main_subject = " ".join(unique_words[:3]).title() if unique_words else "Interesting Daily Challenge"
     
-    # Ekran yazılarını ve promptları canlı trend kelimelerinden üret
-    w1 = words[0] if len(words) > 0 else "TRENDING"
-    w2 = words[1] if len(words) > 1 else "VIRAL"
-    w3 = words[2] if len(words) > 2 else "MUST SEE"
-
-    final_video_title = f"{main_topic[:50]} #shorts #viral #trending"
-
-    # HİÇBİR SABİT METİN YOK: Promptlar ve yazılar trend verisinden türetilir
+    # Videonun gerçek konusuna uygun dinamik görsel istemleri (Prompt)
     scenes = [
         {
-            "prompt": f"Cinematic photorealistic 8k movie scene of {main_topic}, highly detailed dynamic action",
-            "text": f"{w1} {w2}"
+            "prompt": f"A realistic 8k video clip showing {main_subject}, detailed subject focus, cinematic lighting",
+            "text": unique_words[0].upper() if len(unique_words) > 0 else "LOOK AT THIS"
         },
         {
-            "prompt": f"Hyper-realistic slow motion video of {w1} {w2} challenge, 4k resolution cinematic lighting",
-            "text": f"WAIT FOR {w3}"
+            "prompt": f"Close up video shot centered on {main_subject}, high resolution, natural motion",
+            "text": unique_words[1].upper() if len(unique_words) > 1 else "WHAT HAPPENS"
         },
         {
-            "prompt": f"Photorealistic dynamic close up shot of {w2} {w3} viral moment, action shot",
-            "text": f"UNBELIEVABLE {w1}"
+            "prompt": f"A detailed cinematic scene depicting {main_subject}, smooth movement, photorealistic",
+            "text": unique_words[2].upper() if len(unique_words) > 2 else "FINAL RESULT"
         }
     ]
 
-    logger.info(f"📌 Dinamik YouTube Başlığı: '{final_video_title}'")
-    for i, s in enumerate(scenes):
-        logger.info(f"🎬 Sahne {i+1} Metni: '{s['text']}' | Prompt: '{s['prompt'][:40]}...'")
-
-    return scenes, final_video_title
-
-
-# 2. HUGGING FACE PUBLIC GPU QUEUE (SIRADA BEKLEME MOTORU)
-def render_video_strict_queue(prompt: str) -> str:
-    logger.info(f"⚡ HF Public Video GPU alanına bağlanılıyor: '{prompt[:35]}...'")
+    final_title = f"{video_titles[0][:50]} #shorts #trending" if video_titles else f"{main_subject} #shorts"
+    logger.info(f"📌 Tespit Edilen Ana Konu: '{main_subject}'")
+    logger.info(f"📌 Video Başlığı: '{final_title}'")
     
+    return scenes, final_title
+
+
+# 2. HUGGING FACE GPU KUYRUK BEKLEME MOTORU
+def render_video_with_patient_queue(prompt: str) -> str:
+    logger.info(f"⚡ HF Public GPU alanına bağlanılıyor: '{prompt[:40]}...'")
+    
+    # Kamu kullanımına açık, sıra bekleten Gradio alanları
     public_spaces = [
-        "cjwbw/damo-vilab-text-to-video-synthesis",
-        "artificialguybr/Text-To-Video-Alpha",
-        "aipicasso/Text2Video-Zero"
+        ("damo-vilab/modelscope-text-to-video-synthesis", "/predict"),
+        ("guoyww/AnimateDiff", "/generate"),
+        ("ginipick/text-to-video", "/generate_video")
     ]
 
-    for space in public_spaces:
+    for space, endpoint in public_spaces:
         try:
-            logger.info(f"⏳ [{space}] alanında sıra bekleniyor...")
-            client = Client(space, verbose=False)
-            
-            job = client.submit(
-                prompt,
-                api_name="/predict"
-            )
+            logger.info(f"⏳ [{space}] alanında GPU kuyruğuna giriliyor...")
+            kwargs = {"verbose": False}
+            if HF_TOKEN:
+                kwargs["hf_token"] = HF_TOKEN
 
-            queue_timer = 0
+            client = Client(space, **kwargs)
+            job = client.submit(prompt, api_name=endpoint)
+
+            wait_time = 0
             while not job.done():
-                time.sleep(15)
-                queue_timer += 15
-                if queue_timer % 30 == 0:
-                    logger.info(f"⏳ [{space}] Sıra bekleniyor... ({queue_timer} sn geçti)")
+                time.sleep(20)
+                wait_time += 20
+                logger.info(f"⏳ [{space}] GPU kuyruğunda sıra bekleniyor... ({wait_time} saniye oldu)")
 
             result = job.result()
             video_path = result if isinstance(result, str) else result[0]
-            
+
             if str(video_path).lower().endswith(('.mp4', '.avi', '.mov', '.webm')):
-                logger.info(f"✅ [{space}] AI Video başarıyla üretildi: {video_path}")
+                logger.info(f"✅ [{space}] Kuyruk tamamlandı, video teslim alındı: {video_path}")
                 return video_path
 
         except Exception as e:
-            logger.warning(f"⚠️ [{space}] meşgul veya sıra verilemedi: {e}")
+            logger.warning(f"⚠️ [{space}] alanında sıra beklenirken bağlantı kesildi/meşgul: {e}")
             continue
 
-    raise RuntimeError("❌ Kamuya açık Hugging Face video alanları sıra vermedi.")
+    raise RuntimeError("❌ Kamuya açık hiçbir HF alanında sıra alınamadı.")
 
 
-# 3. OTOMATİK MONTAJ, SHORTS YÜKLEME VE AUTO-LIKE
+# 3. OTOMATİK DÜZENLEME, MONTAJ VE YÜKLEME
 def main():
-    scenes, video_title = analyze_and_build_dynamic_content()
+    scenes, video_title = extract_topic_and_generate_prompts()
     video_clips = []
 
     for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} işleniyor...")
-        video_file_path = render_video_strict_queue(scene["prompt"])
+        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} hazırlanıyor...")
+        video_file_path = render_video_with_patient_queue(scene["prompt"])
         
         clip = VideoFileClip(video_file_path)
-            
-        # 🎬 9:16 VERTICAL CROP
+        
+        # 9:16 Dikey Format
         clip_resized = clip.resized(height=1920)
         vertical_clip = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
 
-        # 📝 DYNAMIC TEXT OVERLAY
+        # Dinamik Konu Yazısı
         txt_clip = TextClip(
             text=scene["text"],
-            font_size=50,
+            font_size=55,
             color='yellow',
             stroke_color='black',
             stroke_width=3,
@@ -176,7 +174,7 @@ def main():
             size=(900, 300)
         ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-        # 🔊 DYNAMIC TTS AUDIO
+        # Ses
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
@@ -186,54 +184,43 @@ def main():
         composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
         video_clips.append(composite)
 
-    if not video_clips:
-        logger.error("❌ Hiçbir video işlenemedi.")
+    logger.info("🎬 Videolar birleştiriliyor...")
+    final_video = concatenate_videoclips(video_clips, method="compose")
+    output_file = OUT_DIR / "short_video.mp4"
+    final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
+
+    if not os.path.exists('token.json'):
+        logger.error("❌ token.json bulunamadı. Otomatik yükleme iptal edildi.")
         sys.exit(1)
 
-    try:
-        logger.info("🎬 Video klipler birleştiriliyor...")
-        final_video = concatenate_videoclips(video_clips, method="compose")
-        output_file = OUT_DIR / "short_video.mp4"
-        final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
-        logger.info(f"✅ Final video kaydedildi: {output_file}")
+    logger.info("🚀 YouTube Shorts'a yükleniyor...")
+    creds = Credentials.from_authorized_user_file('token.json')
+    youtube = build('youtube', 'v3', credentials=creds)
 
-        # 🚀 YOUTUBE SHORTS UPLOAD & AUTO-LIKE
-        if not os.path.exists('token.json'):
-            logger.error("❌ 'token.json' bulunamadı! Yükleme atlandı.")
-            sys.exit(1)
-
-        logger.info("🚀 YouTube Shorts'a yükleniyor...")
-        creds = Credentials.from_authorized_user_file('token.json')
-        youtube = build('youtube', 'v3', credentials=creds)
-
-        body = {
-            'snippet': {
-                'title': video_title,
-                'description': f'{video_title}',
-                'categoryId': '22'
-            },
-            'status': {
-                'privacyStatus': 'public',
-                'selfDeclaredMadeForKids': False,
-                'containsSyntheticMedia': True
-            }
+    body = {
+        'snippet': {
+            'title': video_title,
+            'description': video_title,
+            'categoryId': '22'
+        },
+        'status': {
+            'privacyStatus': 'public',
+            'selfDeclaredMadeForKids': False,
+            'containsSyntheticMedia': True
         }
-        media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
-        
-        upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-        video_id = upload_response.get('id')
-        logger.info(f"🎉 Başarıyla yüklendi! Video ID: {video_id}")
+    }
+    media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
+    
+    upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
+    video_id = upload_response.get('id')
+    logger.info(f"🎉 Yüklendi! Video ID: {video_id}")
 
-        if video_id:
-            try:
-                youtube.videos().rate(id=video_id, rating='like').execute()
-                logger.info("👍 Otomatik beğenildi (Auto-liked)!")
-            except Exception as like_error:
-                logger.warning(f"⚠️ Auto-like adımı atlandı: {like_error}")
-
-    except Exception as e:
-        logger.error(f"Render/Upload Hatası: {e}")
-        sys.exit(1)
+    if video_id:
+        try:
+            youtube.videos().rate(id=video_id, rating='like').execute()
+            logger.info("👍 Otomatik beğenildi (Auto-liked)!")
+        except Exception as e:
+            logger.warning(f"Auto-like uyarısı: {e}")
 
 
 if __name__ == "__main__":
