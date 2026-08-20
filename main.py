@@ -56,11 +56,11 @@ modal_image = (
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. GPU RENDERER WITH MOUNTED PERSISTENT VOLUME
+# 2. 16GB RAM OPTIMIZED GPU RENDERER
 @app.cls(
     gpu="a10g", 
     cpu=4.0, 
-    memory=32768, 
+    memory=16384,  # Kesin 16 GB sınırı (16 * 1024)
     timeout=1200, 
     retries=0, 
     volumes={"/cache": cache_volume}
@@ -74,15 +74,14 @@ class VideoGenerator:
         print("⚡ Loading photorealistic LTX-Video model from persistent volume...", flush=True)
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
-            torch_dtype=torch.bfloat16
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True  # 16 GB sınırında RAM patlamasını önleyen kritik parametre
         )
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
         
-        # Save cache state to persistent volume
-        cache_volume.commit()
-        print("✅ Container loaded and model persistent cache committed!", flush=True)
+        print("✅ Container loaded and ready!", flush=True)
 
     @modal.method()
     def render_all(self, prompts: list) -> list:
@@ -153,17 +152,15 @@ def analyze_live_trends_for_t2v():
             part='snippet'
         ).execute()
         
-        # Trend başlıklarından özel karakterleri temizleyip anlamlı kelimeleri çekme
         for item in res.get('items', []):
             raw_title = item['snippet']['title']
-            clean_title = re.sub(r'[^\w\s]', '', raw_title) # Noktalama işaretlerini kaldırır
+            clean_title = re.sub(r'[^\w\s]', '', raw_title) 
             words = [w for w in clean_title.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'http', 'https', 'with']]
             extracted_keywords.extend(words)
 
     except Exception as e:
         logger.warning(f"⚠️ YouTube API warning: {e}. Using fallback keywords.")
 
-    # Çekilen gerçek trend kelimelerini birleştirme
     unique_words = list(dict.fromkeys(extracted_keywords))[:4]
     
     if unique_words:
@@ -174,7 +171,7 @@ def analyze_live_trends_for_t2v():
 
     logger.info(f"📌 Generated Title: '{final_video_title}'")
 
-    # Fotogerçekçi ve yüksek kaliteli T2V prompt yapıları
+    # Gemini'ye ihtiyaç duymadan garantili, fotogerçekçi promptlar
     parsed_data = [
         {
             "prompt": "Cinematic photorealistic 8k dynamic action shot of a real person performing an extreme movement, dramatic studio cinematic lighting, ultra detailed",
