@@ -15,7 +15,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 def generate_dynamic_text(prompt_type, topic):
-    model = genai.GenerativeModel('gemini-pro')
+    # Güncel ve hızlı Gemini modeli kullanılıyor
+    model = genai.GenerativeModel('gemini-1.5-flash')
     if prompt_type == "script":
         prompt = f"Write a viral, engaging 1-sentence YouTube Shorts narration about the topic: '{topic}'. No emojis or hashtags."
     else:
