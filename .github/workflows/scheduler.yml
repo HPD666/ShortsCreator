@@ -1,15 +1,14 @@
-name: Daily AI Video Generator
+name: Daily AI Shorts Generator
 
 on:
   schedule:
-    # Her gün saat 06:00 UTC'de otomatik çalışır
-    - cron: '0 6 * * *'
-  # İstenildiği zaman GitHub panelinden elle başlatma seçeneği
-  workflow_dispatch:
+    - cron: '0 6 * * *' # Her gün saat 12:00 UTC'de otomatik çalışır
+  workflow_dispatch: # Actions sekmesinden elle tetikleme imkanı sağlar
 
 jobs:
   generate-and-run:
     runs-on: ubuntu-latest
+    timeout-minutes: 180 # HF kuyruklarında sıra bekleme ihtimaline karşı 3 saatlik güvenli limit
 
     steps:
       - name: Checkout Repository
@@ -19,21 +18,20 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
-      - name: Install Dependencies & Authenticate Modal
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install modal
-          modal token set --token-id $MODAL_TOKEN_ID --token-secret $MODAL_TOKEN_SECRET
+          pip install -r requirements.txt
 
       - name: Run Main Script
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
         run: |
           python main.py
