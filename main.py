@@ -8,10 +8,10 @@ import requests
 import warnings
 from pathlib import Path
 
-# Stream logs continuously in GitHub Actions
+# Stream logs live in GitHub Actions
 sys.stdout.reconfigure(line_buffering=True)
 
-# Suppress unnecessary SDK warnings
+# Suppress HTTP and SDK noise
 warnings.filterwarnings("ignore")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -30,9 +30,9 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("zero-cost-full-auto")
+logger = logging.getLogger("zero-cost-queue-auto")
 
-# Credentials & Tokens Check
+# YouTube API Credentials
 YT_API_KEY = os.environ.get("YT_API_KEY")
 
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
@@ -51,7 +51,7 @@ OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="free-auto-t2v-"))
 
 
-# 1. CANLI YOUTUBE TREND ANALİZİ
+# 1. LIVE YOUTUBE TREND EXTRACTION
 def analyze_live_trends():
     logger.info("🔥 Live YouTube Shorts trends fetching...")
     extracted_keywords = []
@@ -73,7 +73,7 @@ def analyze_live_trends():
             words = [w for w in clean_title.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'http', 'https', 'with']]
             extracted_keywords.extend(words)
     except Exception as e:
-        logger.warning(f"⚠️ YouTube API uyarısı: {e}")
+        logger.warning(f"⚠️ YouTube API warning: {e}")
 
     unique_words = list(dict.fromkeys(extracted_keywords))[:4]
     trend_phrase = " ".join(unique_words).title() if unique_words else "Epic Extreme Action"
@@ -98,56 +98,61 @@ def analyze_live_trends():
     return scenes, final_video_title
 
 
-# 2. ÜCRETSİZ HUGGING FACE GPU (KUYRUK DESTEKLİ)
-def render_video_free_queue(prompt: str) -> str:
-    logger.info(f"⚡ Hugging Face GPU kuyruğuna giriliyor: '{prompt[:35]}...'")
+# 2. ÜCRETSİZ HUGGING FACE PUBLIC GPU (KUYRUKTA BEKLEYEN MOTOR)
+def render_video_free_public_queue(prompt: str) -> str:
+    logger.info(f"⚡ HF Public GPU alanına bağlanılıyor: '{prompt[:35]}...'")
     
-    # 0$ LTX Video Hugging Face Alanı
-    space_name = "Lightricks/LTX-Video-Demo"
-    
-    try:
-        client = Client(space_name, verbose=False)
-        
-        # Submit ile istek atıp kuyruğu sabırla bekler
-        job = client.submit(
-            prompt=prompt,
-            negative_prompt="worst quality, low quality, anime, cartoon, deformed, blurry",
-            height=480,
-            width=704,
-            num_frames=121,
-            frame_rate=25,
-            api_name="/generate_video_1"
-        )
-        
-        logger.info("⏳ Hugging Face ücretsiz sunucu kuyruğu bekleniyor (Bu işlem birkaç dakika sürebilir)...")
-        
-        while not job.done():
-            time.sleep(10)
+    # Herkese açık, auth istemeyen alternatif Text-To-Video Gradio alanları
+    public_spaces = [
+        ("damo-vilab/text-to-video-ms-1.7b", "/predict"),
+        ("showlab/Show-1", "/generate_video")
+    ]
+
+    for space, api_endpoint in public_spaces:
+        try:
+            logger.info(f"⏳ [{space}] kuyruğuna istek gönderildi...")
+            client = Client(space, verbose=False)
             
-        result = job.result()
-        video_path = result if isinstance(result, str) else result[0]
-        logger.info("✅ Hugging Face kuyruğundan video başarıyla çekildi!")
-        return video_path
+            job = client.submit(
+                prompt,
+                api_name=api_endpoint
+            )
 
-    except Exception as e:
-        logger.warning(f"⚠️ HF Space yoğun veya yanıt vermedi, ücretsiz Pollinations motoruna geçiliyor: {e}")
-        # Ücretsiz fallback görsel-video akışı
-        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=704&height=480&model=flux"
-        img_data = requests.get(url).content
-        tmp_img = TMP_DIR / f"fallback_{time.time()}.jpg"
-        with open(tmp_img, "wb") as f:
-            f.write(img_data)
-        return str(tmp_img)
+            # Sıra bekleme döngüsü
+            queue_timer = 0
+            while not job.done():
+                time.sleep(15)
+                queue_timer += 15
+                if queue_timer % 30 == 0:
+                    logger.info(f"⏳ Kuyruk bekleniyor... ({queue_timer} saniye geçti)")
+
+            result = job.result()
+            video_path = result if isinstance(result, str) else result[0]
+            logger.info(f"✅ [{space}] kuyruğundan video hazır!")
+            return video_path
+
+        except Exception as e:
+            logger.warning(f"⚠️ {space} sıra alınamadı veya meşgul: {e}")
+            continue
+
+    # Tüm kuyruklar kilitliyse Pollinations yedek görsel motoru
+    logger.warning("⚠️ HF alanları yanıt vermedi, Pollinations motoru devreye giriyor.")
+    url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=704&height=480&model=flux"
+    img_data = requests.get(url).content
+    tmp_img = TMP_DIR / f"fallback_{time.time()}.jpg"
+    with open(tmp_img, "wb") as f:
+        f.write(img_data)
+    return str(tmp_img)
 
 
-# 3. NİHAİ MONTAJ, YÜKLEME VE OTOMATİK BEĞENİ
+# 3. NİHAİ MONTAJ, YÜKLEME VE AUTO-LIKE
 def main():
     scenes, video_title = analyze_live_trends()
     video_clips = []
 
     for idx, scene in enumerate(scenes):
         logger.info(f"🎬 Processing Clip {idx+1}/{len(scenes)}...")
-        generated_file = render_video_free_queue(scene["prompt"])
+        generated_file = render_video_free_public_queue(scene["prompt"])
         
         if generated_file.endswith(".jpg"):
             from moviepy import ImageClip
@@ -181,7 +186,7 @@ def main():
         video_clips.append(composite)
 
     if not video_clips:
-        logger.error("❌ Hiçbir video klibi işlenemedi.")
+        logger.error("❌ Hiçbir video işlenemedi.")
         sys.exit(1)
 
     try:
@@ -191,7 +196,7 @@ def main():
         final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
         logger.info(f"✅ Final video saved: {output_file}")
 
-        # 🚀 YOUTUBE SHORTS UPLOAD & AUTOMATIC LIKE
+        # 🚀 YOUTUBE SHORTS UPLOAD & AUTO-LIKE
         if os.path.exists('token.json'):
             logger.info("🚀 Uploading to YouTube Shorts...")
             creds = Credentials.from_authorized_user_file('token.json')
@@ -215,7 +220,7 @@ def main():
             video_id = upload_response.get('id')
             logger.info(f"🎉 Successfully uploaded! Video ID: {video_id}")
 
-            # AUTOMATIC LIKE
+            # AUTO-LIKE
             if video_id:
                 try:
                     youtube.videos().rate(id=video_id, rating='like').execute()
