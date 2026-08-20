@@ -2,7 +2,7 @@ name: Dynamic Auto Shorts Creator
 
 on:
   schedule:
-    - cron: '0 12 * * *' # Her gün saat 12:00 UTC'de otomatik çalışır
+    - cron: '0 6  * * *' # Her gün saat 12:00 UTC'de otomatik çalışır
   workflow_dispatch: # GitHub arayüzünden manuel tetikleme butonu
 
 jobs:
