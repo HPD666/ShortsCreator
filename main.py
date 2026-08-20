@@ -10,12 +10,21 @@ from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 
+# --- GİTHUB SECRETS DOSYA DÖNÜŞTÜRÜCÜ ---
+# Secrets içinde duran JSON verilerini çalışma anında dosyaya yazar
+if os.getenv("YOUTUBE_CLIENT_SECRET") and not os.path.exists("client_secret.json"):
+    with open("client_secret.json", "w") as f:
+        f.write(os.getenv("YOUTUBE_CLIENT_SECRET"))
+
+if os.getenv("TOKEN_JSON") and not os.path.exists("token.json"):
+    with open("token.json", "w") as f:
+        f.write(os.getenv("TOKEN_JSON"))
+
 # --- GEMINI AI KURULUMU ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 def generate_dynamic_text(prompt_type, topic):
-    # En güncel desteklenen Gemini modeli
     model_name = 'gemini-3.6-flash'
     model = genai.GenerativeModel(model_name)
     
@@ -98,7 +107,6 @@ def process_media(image_path, topic):
     
     audio_clip = AudioFileClip(audio_file)
     
-    # Görseli dikey 9:16 Shorts videosuna dönüştürür
     video_clip = ImageClip(image_path).set_duration(audio_clip.duration)
     final_clip = video_clip.set_audio(audio_clip)
         
