@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import re
 import logging
 import tempfile
 import warnings
@@ -26,12 +27,6 @@ from moviepy import (
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-
-try:
-    from google import genai
-    GENAI_AVAILABLE = True
-except ImportError:
-    GENAI_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger("ai-t2v-creator")
@@ -133,7 +128,6 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
         logger.warning(f"token.json could not be written: {e}")
 
 YT_API_KEY = os.environ.get("YT_API_KEY", None)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
@@ -141,74 +135,62 @@ TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-t2v-"))
 
 
 def analyze_live_trends_for_t2v():
-    if not YT_API_KEY or not GEMINI_API_KEY or not GENAI_AVAILABLE:
-        logger.error("❌ MISSING API KEYS! Both YT_API_KEY and GEMINI_API_KEY are required.")
+    if not YT_API_KEY:
+        logger.error("❌ MISSING API KEY! YT_API_KEY is required.")
         sys.exit(1)
 
     logger.info("🔥 Live YouTube Shorts trends fetching...")
-    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
     
-    res = youtube.search().list(
-        q='viral shorts trending action challenge',
-        type='video',
-        videoDuration='short',
-        order='viewCount',
-        maxResults=10,
-        part='snippet'
-    ).execute()
-    
-    titles = [item['snippet']['title'] for item in res.get('items', [])]
-    trend_context = " | ".join(titles)
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    gemini_prompt = (
-        f"Analyze these trending YouTube Shorts titles: '{trend_context}'. "
-        "Identify the core trending visual action or concept (e.g., flying, jumping, superhero motion, viral challenge). "
-        "Write 3 detailed English text-to-video prompts depicting a REAL PERSON or REALISTIC CHARACTER performing that exact trending action. "
-        "CRITICAL: Style MUST BE hyper-realistic, photorealistic, 8k resolution, cinematic movie scene. Do NOT make it cartoon. "
-        "Also provide a catchy 3-word English overlay text for each scene. "
-        "Format output: T2V_PROMPT|TEXT_OVERLAY for each line, separated by '---'."
-    )
-    
-    response = None
-    models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash']
-    
-    for model_name in models_to_try:
-        for attempt in range(3):
-            try:
-                logger.info(f"🤖 Requesting Gemini model: {model_name} (Attempt {attempt + 1}/3)...")
-                response = client.models.generate_content(model=model_name, contents=gemini_prompt)
-                if response and response.text:
-                    logger.info(f"✅ Gemini response successfully received ({model_name}).")
-                    break
-            except Exception as e:
-                logger.warning(f"⚠️ {model_name} (Attempt {attempt + 1}) failed: {e}")
-                if "429" in str(e):
-                    logger.info("⏳ Quota sleep: waiting 35 seconds...")
-                    time.sleep(35)
-                else:
-                    time.sleep(3)
+    extracted_keywords = []
+    try:
+        youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
+        res = youtube.search().list(
+            q='viral shorts trending action challenge',
+            type='video',
+            videoDuration='short',
+            order='viewCount',
+            maxResults=5,
+            part='snippet'
+        ).execute()
         
-        if response and response.text:
-            break
+        # Trend başlıklarından özel karakterleri temizleyip anlamlı kelimeleri çekme
+        for item in res.get('items', []):
+            raw_title = item['snippet']['title']
+            clean_title = re.sub(r'[^\w\s]', '', raw_title) # Noktalama işaretlerini kaldırır
+            words = [w for w in clean_title.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'http', 'https', 'with']]
+            extracted_keywords.extend(words)
 
-    if not response or not response.text:
-        logger.error("❌ Gemini trend analysis failed.")
-        sys.exit(1)
+    except Exception as e:
+        logger.warning(f"⚠️ YouTube API warning: {e}. Using fallback keywords.")
 
-    raw_items = [s.strip() for s in response.text.split('---') if s.strip()]
-    parsed_data = []
-    for item in raw_items:
-        if '|' in item:
-            p, t = item.split('|', 1)
-            parsed_data.append({"prompt": p.strip(), "text": t.strip()})
+    # Çekilen gerçek trend kelimelerini birleştirme
+    unique_words = list(dict.fromkeys(extracted_keywords))[:4]
     
-    if len(parsed_data) < 3:
-        logger.error("❌ Insufficient prompts generated.")
-        sys.exit(1)
+    if unique_words:
+        trend_phrase = " ".join(unique_words).title()
+        final_video_title = f"{trend_phrase} Trend #trend #viral #shorts"
+    else:
+        final_video_title = "Epic Extreme Action Challenge Trend #trend #viral #shorts"
 
-    return parsed_data[:3], "#trend #viral #shorts"
+    logger.info(f"📌 Generated Title: '{final_video_title}'")
+
+    # Fotogerçekçi ve yüksek kaliteli T2V prompt yapıları
+    parsed_data = [
+        {
+            "prompt": "Cinematic photorealistic 8k dynamic action shot of a real person performing an extreme movement, dramatic studio cinematic lighting, ultra detailed",
+            "text": "EPIC ACTION"
+        },
+        {
+            "prompt": "Hyper-realistic slow motion cinematic video of a professional athlete completing an intense viral challenge, 4k movie quality, high speed action",
+            "text": "UNREAL SKILL"
+        },
+        {
+            "prompt": "Photorealistic 8k close up video of a person performing a high-energy action stunt, realistic skin textures, cinematic lighting",
+            "text": "MUST WATCH"
+        }
+    ]
+
+    return parsed_data, final_video_title
 
 
 def main():
@@ -287,7 +269,7 @@ def main():
             body = {
                 'snippet': {
                     'title': video_title,
-                    'description': f'{video_title} #shorts #trending',
+                    'description': f'{video_title}',
                     'categoryId': '22'
                 },
                 'status': {
