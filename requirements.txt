@@ -1,4 +1,4 @@
-gTTS
+gtts
 gradio_client
 google-generativeai
 moviepy>=2.0.0
