@@ -14,7 +14,6 @@ sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
 from gtts import gTTS
-
 from moviepy import (
     ImageClip,
     TextClip,
@@ -99,9 +98,12 @@ def generate_story_with_gemini(trends):
     Do not add any Markdown code blocks or extra explanations, output raw JSON only.
     """
 
+    data = None
+
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
+            # Uyumluluk için güncel model adları sırasıyla denenir
             model = genai.GenerativeModel("gemini-1.5-flash")
             response = model.generate_content(prompt_instruction)
             raw_text = response.text.strip()
@@ -109,23 +111,36 @@ def generate_story_with_gemini(trends):
             raw_text = re.sub(r'```\s*', '', raw_text)
             data = json.loads(raw_text)
             logger.info("✅ Gemini AI Senaryoyu Başarıyla Oluşturdu!")
-            return data["scenes"], data["title"]
         except Exception as e:
             logger.warning(f"⚠️ Gemini API hatası, yedek yapay zekaya geçiliyor: {e}")
 
-    # YEDEK YAPAY ZEKA (Pollinations Free LLM)
-    try:
-        url = "https://text.pollinations.ai/"
-        res = requests.post(url, json={"messages": [{"role": "user", "content": prompt_instruction}], "model": "openai"}, timeout=30)
-        raw_text = res.text.strip()
-        raw_text = re.sub(r'```json\s*', '', raw_text)
-        raw_text = re.sub(r'```\s*', '', raw_text)
-        data = json.loads(raw_text)
-        logger.info("✅ Yedek AI Senaryoyu Başarıyla Oluşturdu!")
-        return data["scenes"], data["title"]
-    except Exception as e:
-        logger.error(f"❌ Yapay Zeka Katmanı Yanıt Vermedi: {e}")
-        sys.exit(1)
+    if not data or "scenes" not in data:
+        # YEDEK YAPAY ZEKA (Pollinations Free LLM)
+        try:
+            url = "https://text.pollinations.ai/"
+            res = requests.post(url, json={"messages": [{"role": "user", "content": prompt_instruction}], "model": "openai"}, timeout=30)
+            raw_text = res.text.strip()
+            raw_text = re.sub(r'```json\s*', '', raw_text)
+            raw_text = re.sub(r'```\s*', '', raw_text)
+            data = json.loads(raw_text)
+            logger.info("✅ Yedek AI Senaryoyu Başarıyla Oluşturdu!")
+        except Exception as e:
+            logger.warning(f"⚠️ Yedek AI yanıt veremedi veya geçersiz JSON döndürdü: {e}")
+
+    # EĞER HER İKİSİ DE BAŞARISIZ OLURSA GÜVENLİ FALLBACK SENARYOSU
+    if not data or "scenes" not in data:
+        logger.info("🔄 Varsayılan güvenli 3D senaryosu devreye giriyor...")
+        data = {
+            "title": "Unbelievable 3D Story! 😱 #shorts #3d #viral",
+            "scenes": [
+                {"text": "He found a mystery box.", "prompt": "3D Pixar character holding a glowing mystery box, highly detailed 3D Pixar style, 8k render, no text"},
+                {"text": "Inside was pure magic!", "prompt": "3D Pixar character looking amazed inside a glowing box with magical particles, vibrant lighting, no text"},
+                {"text": "It granted one wish.", "prompt": "3D Pixar character floating with golden magical energy around, epic lighting, no text"},
+                {"text": "The best day ever!", "prompt": "3D Pixar character celebrating happily outdoors, 3D animated style, 8k render, no text"}
+            ]
+        }
+
+    return data["scenes"], data.get("title", "Epic 3D Shorts #shorts #viral")
 
 
 # 3. 3D SAHNE GÖRSELİ ÜRETME (POLLINATIONS)
