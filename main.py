@@ -13,18 +13,25 @@ from pathlib import Path
 sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
+from gtts import gTTS
 from moviepy import (
     ImageClip,
+    TextClip,
+    AudioFileClip,
+    CompositeVideoClip,
     concatenate_videoclips
 )
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
+import google.generativeai as genai
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("3d-pure-no-text")
+logger = logging.getLogger("3d-ai-story")
 
 YT_API_KEY = os.environ.get("YT_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
@@ -39,14 +46,13 @@ if not YT_API_KEY:
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="3d-pure-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="3d-ai-"))
 
 
-# 1. TREND ANALİZİ VE YAZISIZ PROMPT
-def extract_clean_context():
-    logger.info("🔍 YouTube trend içerikleri analiz ediliyor...")
-    words, titles = [], []
-
+# 1. YOUTUBE TRENDLERİNİ ÇEKME
+def fetch_youtube_trends():
+    logger.info("🔍 Güncel YouTube trend içerikleri çekiliyor...")
+    titles = []
     try:
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
         res = youtube.search().list(
@@ -58,73 +64,128 @@ def extract_clean_context():
             part='snippet'
         ).execute()
 
-        forbidden = {'shorts', 'video', 'youtube', 'http', 'https', 'subscribe', 'channel'}
-
         for item in res.get('items', []):
-            t = item['snippet']['title']
-            d = item['snippet'].get('description', '')
-            titles.append(t)
-            clean = re.sub(r'[^\w\s]', '', f"{t} {d}")
-            for w in clean.split():
-                if len(w) > 3 and w.lower() not in forbidden:
-                    words.append(w)
-
+            titles.append(item['snippet']['title'])
     except Exception as e:
         logger.warning(f"⚠️ YouTube API okuma uyarısı: {e}")
 
-    unique_words = list(dict.fromkeys(words))
-    main_subject = " ".join(unique_words[:3]) if unique_words else "3D Animated World"
-
-    style_suffix = "3D Pixar Unreal Engine 5 render, highly detailed 3D animation style, vibrant lighting, smooth digital art, 8k resolution, no text, no visual words, no watermark"
-
-    scenes = [
-        {"prompt": f"3D animation clip of {main_subject}, {style_suffix}"},
-        {"prompt": f"Action 3D scene focusing on {main_subject}, dynamic angles, {style_suffix}"},
-        {"prompt": f"Full 3D animated cinematic output of {main_subject}, {style_suffix}"}
-    ]
-
-    final_title = f"3D {titles[0][:45]} #shorts #3d #viral" if titles else f"3D {main_subject} #shorts"
-    return scenes, final_title
+    return titles if titles else ["Mystery Box Challenge", "5 Dollar Challenge", "Futuristic Gadgets"]
 
 
-# 2. BULUT ÜZERİNDEN SAF 3D GÖRSEL İNDİRME
+# 2. GEMINI AI İLE SINIRSIZ & DİNAMİK HİKAYE VE PROMPT ÜRETİMİ
+def generate_story_with_gemini(trends):
+    logger.info("🧠 Gemini AI trendleri insan gibi analiz edip dinamik senaryo yazıyor...")
+    
+    prompt_instruction = f"""
+    You are a viral YouTube Shorts scriptwriter and 3D animator.
+    Analyze these trending topic titles: {json.dumps(trends)}
+
+    Create a funny, surprising, 4-scene story based on the most viral idea among these trends.
+    For each scene:
+    1. 'text': A very short spoken sentence for voiceover (MAX 3 to 5 words per scene).
+    2. 'prompt': A detailed 3D Pixar / Unreal Engine 5 animation prompt describing EXACTLY what is happening in 'text'. (Include parameters: 3D Pixar style, 8k render, vibrant lighting, highly detailed, no text on picture).
+
+    Return ONLY a valid JSON object with this structure:
+    {{
+      "title": "A catchy YouTube Shorts title with hashtags",
+      "scenes": [
+        {{"text": "Short spoken sentence", "prompt": "Detailed 3D prompt matching the text"}},
+        {{"text": "Short spoken sentence", "prompt": "Detailed 3D prompt matching the text"}},
+        {{"text": "Short spoken sentence", "prompt": "Detailed 3D prompt matching the text"}},
+        {{"text": "Short spoken sentence", "prompt": "Detailed 3D prompt matching the text"}}
+      ]
+    }}
+    Do not add any Markdown code blocks or extra explanations, output raw JSON only.
+    """
+
+    # Eğer GEMINI_API_KEY tanımlıysa Gemini 1.5 Flash'ı kullan
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt_instruction)
+            raw_text = response.text.strip()
+            # Markdown temizliği
+            raw_text = re.sub(r'```json\s*', '', raw_text)
+            raw_text = re.sub(r'```\s*', '', raw_text)
+            data = json.loads(raw_text)
+            logger.info("✅ Gemini AI Senaryoyu Başarıyla Oluşturdu!")
+            return data["scenes"], data["title"]
+        except Exception as e:
+            logger.warning(f"⚠️ Gemini API hatası, yedek yapay zekaya geçiliyor: {e}")
+
+    # YEDEK YAPAY ZEKA (Pollinations Free Text LLM)
+    try:
+        url = "https://text.pollinations.ai/"
+        res = requests.post(url, json={"messages": [{"role": "user", "content": prompt_instruction}], "model": "openai"}, timeout=30)
+        raw_text = res.text.strip()
+        raw_text = re.sub(r'```json\s*', '', raw_text)
+        raw_text = re.sub(r'```\s*', '', raw_text)
+        data = json.loads(raw_text)
+        logger.info("✅ Yedek AI Senaryoyu Başarıyla Oluşturdu!")
+        return data["scenes"], data["title"]
+    except Exception as e:
+        logger.error(f"❌ Yapay Zeka Katmanı Yanıt Vermedi: {e}")
+        sys.exit(1)
+
+
+# 3. 3D SAHNE GÖRSELİ ÜRETME (POLLINATIONS)
 def generate_3d_image(prompt: str, index: int) -> str:
     output_path = TMP_DIR / f"3d_scene_{index}.jpg"
-    logger.info(f"⚡ 3D Sahne Görseli İndiriliyor... Sahne #{index+1}")
+    logger.info(f"🎨 Sahne #{index+1} AI Promptu Çiziliyor...")
 
     encoded_p = urllib.parse.quote(prompt)
-    seed = int(time.time()) + index
+    seed = int(time.time()) + (index * 17)
     image_url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=turbo&seed={seed}&nologo=true"
 
     response = requests.get(image_url, timeout=90)
     if response.status_code == 200:
         with open(output_path, 'wb') as f:
             f.write(response.content)
-        logger.info(f"✅ 3D Sahne İndirildi: {output_path}")
+        logger.info(f"✅ 3D Sahne Çizildi: {output_path}")
         return str(output_path)
     else:
-        raise RuntimeError(f"❌ 3D Motor Yanıt Vermedi (Status: {response.status_code})")
+        raise RuntimeError(f"❌ Görsel Motoru Yanıt Vermedi (Status: {response.status_code})")
 
 
-# 3. YAZISIZ VİDEO OLUŞTURMA VE YÜKLEME
+# 4. SES, ALTYAZI VE VİDEO KURGUSU
 def main():
-    scenes, video_title = extract_clean_context()
+    trends = fetch_youtube_trends()
+    scenes, video_title = generate_story_with_gemini(trends)
     video_clips = []
 
     for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} işleniyor...")
+        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)}: '{scene['text']}'")
         image_file = generate_3d_image(scene["prompt"], idx)
 
-        # Görseli 4 Saniyelik Video Katmanına Dönüştür
-        clip = ImageClip(image_file).with_duration(4)
-        video_clips.append(clip)
+        # Metin Seslendirme (gTTS)
+        tts_path = TMP_DIR / f"tts_{idx}.mp3"
+        gTTS(text=scene["text"], lang='en').save(str(tts_path))
+        audio_clip = AudioFileClip(str(tts_path))
+        
+        duration = max(3.0, audio_clip.duration + 0.5)
 
-    logger.info("🎬 Saf 3D Sahneler Birleştiriliyor...")
+        # Görsel Katmanı
+        img_clip = ImageClip(image_file).with_duration(duration)
+
+        # Az kelimeli, net okunur sarı çizgi roman altyazısı
+        txt_clip = TextClip(
+            text=scene["text"],
+            font_size=60,
+            color='yellow',
+            stroke_color='black',
+            stroke_width=5,
+            method='caption',
+            size=(950, 250)
+        ).with_duration(duration).with_position(('center', 0.78), relative=True)
+
+        composite = CompositeVideoClip([img_clip, txt_clip]).with_audio(audio_clip)
+        video_clips.append(composite)
+
+    logger.info("🎬 Yapay Zeka Videosu İşleniyor...")
     final_video = concatenate_videoclips(video_clips, method="compose")
     output_file = OUT_DIR / "short_video.mp4"
-    
-    # Videoyu Ses Olmadan Temiz İşle
-    final_video.write_videofile(str(output_file), fps=24, codec="libx264", logger=None)
+    final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
 
     if not os.path.exists('token.json'):
         logger.error("❌ 'token.json' bulunamadı.")
@@ -135,7 +196,7 @@ def main():
     youtube = build('youtube', 'v3', credentials=creds)
 
     body = {
-        'snippet': {'title': video_title, 'description': video_title, 'categoryId': '1'},
+        'snippet': {'title': video_title, 'description': f"{video_title}\n\n#shorts #3d #ai #animation #viral"},
         'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False, 'containsSyntheticMedia': True}
     }
     media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
@@ -144,7 +205,7 @@ def main():
     video_id = upload_response.get('id')
     logger.info(f"🎉 Başarıyla yüklendi! Video ID: {video_id}")
 
-    # OTOMATİK BEĞENİ
+    # OTOMATİK LİKE VE YORUM
     if video_id:
         try:
             youtube.videos().rate(id=video_id, rating='like').execute()
@@ -152,20 +213,19 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ Beğeni uyarısı: {e}")
 
-        # OTOMATİK YORUM
         try:
             comment_body = {
                 'snippet': {
                     'videoId': video_id,
                     'topLevelComment': {
                         'snippet': {
-                            'textOriginal': 'Subscribe for more daily 3D shorts! 🔔'
+                            'textOriginal': 'Subscribe and drop a comment for Part 2! 🔔'
                         }
                     }
                 }
             }
             youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-            logger.info("💬 Otomatik yorum eklendi!")
+            logger.info("💬 Otomatik yorum sabitlendi!")
         except Exception as e:
             logger.warning(f"⚠️ Yorum uyarısı: {e}")
 
