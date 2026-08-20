@@ -1,13 +1,11 @@
 import os
 import time
-import math
 import xml.etree.ElementTree as ET
 import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
-from gtts import gTTS
-from moviepy.editor import ImageClip, AudioFileClip, VideoClip
+from moviepy.editor import VideoClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
@@ -29,17 +27,17 @@ genai.configure(api_key=GEMINI_API_KEY)
 def generate_dynamic_text(prompt_type, topic):
     model = genai.GenerativeModel('gemini-3.6-flash')
     
-    if prompt_type == "script":
-        prompt = f"Write a catchy, viral 1-sentence YouTube Shorts narration about: '{topic}'. Keep it under 20 words. No emojis."
+    if prompt_type == "onscreen":
+        prompt = f"Write a catchy, viral 1-sentence hook for YouTube Shorts about: '{topic}'. Keep it under 15 words. No emojis."
     else:
-        prompt = f"Write an engaging 1-line YouTube comment about '{topic}' to boost audience engagement."
+        prompt = f"Write an engaging 1-line YouTube comment about '{topic}' to boost user interaction."
     
     try:
         response = model.generate_content(prompt)
         return response.text.strip().replace('"', '')
     except Exception as e:
         print(f"Gemini Hata: {e}")
-        return f"Did you know this about {topic}?"
+        return f"What do you think about {topic}?"
 
 # --- 1. CANLI TREND TESPİTİ ---
 def get_trending_topic():
@@ -51,14 +49,14 @@ def get_trending_topic():
         if res.status_code == 200:
             root = ET.fromstring(res.content)
             items = root.findall('.//item/title')
-            if items:
+            if items and items[0].text:
                 topic = items[0].text
                 print(f"Trend Konu Bulundu: {topic}")
                 return topic
     except Exception as e:
         print(f"Google Trends Hata: {e}")
         
-    return "AI Technology Breakthrough"
+    return "Future Technology Trend"
 
 # --- 2. AI GÖRSEL ÜRETİMİ ---
 def generate_100pct_ai_video(prompt_text):
@@ -74,48 +72,43 @@ def generate_100pct_ai_video(prompt_text):
         return path
     raise Exception("Görsel üretilemedi.")
 
-# --- ALTYAZI VE HAREKET EKLENMİŞ VİDEO İŞLEME ---
-def add_subtitles_and_motion(image_path, text, duration):
+# --- EKRAN METNİ VE AKICI YAKINLAŞMA (SESSİZ - YOUTUBE TREND SESİ İÇİN) ---
+def add_subtitles_and_motion(image_path, text, duration=12):
     base_img = Image.open(image_path).convert("RGB").resize((1080, 1920))
     
-    # PIL ile Altyazı Ekleme
     draw = ImageDraw.Draw(base_img)
     try:
-        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 52)
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 54)
     except:
         font = ImageFont.load_default()
         
-    # Metni satırlara böl
     words = text.split()
     lines, current_line = [], []
     for w in words:
         current_line.append(w)
-        if len(" ".join(current_line)) > 22:
+        if len(" ".join(current_line)) > 20:
             lines.append(" ".join(current_line[:-1]))
             current_line = [w]
     if current_line:
         lines.append(" ".join(current_line))
     
-    full_text = "\n".join(lines)
-    
-    # Arka plan kutusu ve metin çizimi
-    y_start = 1400
+    y_start = 1350
     for i, line in enumerate(lines):
         bbox = draw.textbbox((0, 0), line, font=font)
         w = bbox[2] - bbox[0]
         h = bbox[3] - bbox[1]
         x = (1080 - w) // 2
-        y = y_start + (i * 65)
+        y = y_start + (i * 70)
         
-        # Siyah gölge / Arka plan
-        draw.rectangle([x - 15, y - 5, x + w + 15, y + h + 10], fill=(0, 0, 0, 180))
-        draw.text((x, y), line, font=font, fill=(255, 255, 0)) # Sarı yazı
+        # Siyah arka plan kutusu ve parlak sarı yazı
+        draw.rectangle([x - 20, y - 5, x + w + 20, y + h + 10], fill=(0, 0, 0, 190))
+        draw.text((x, y), line, font=font, fill=(255, 255, 0))
 
     img_np = np.array(base_img)
 
-    # Ken Burns (Zoom/Pan) Efekti Oluşturma
+    # Ken Burns (Zoom/Pan) Efekti
     def make_frame(t):
-        zoom = 1.0 + 0.08 * (t / duration) # Zamanla %8 yakınlaşma
+        zoom = 1.0 + 0.10 * (t / duration) # %10 yumuşak yakınlaşma
         h, w, _ = img_np.shape
         new_h, new_w = int(h / zoom), int(w / zoom)
         top = (h - new_h) // 2
@@ -127,35 +120,24 @@ def add_subtitles_and_motion(image_path, text, duration):
 
     return VideoClip(make_frame, duration=duration)
 
-# --- 3. MONTAJ ---
+# --- 3. MONTAJ (SESSİZ MP4 EXPORT) ---
 def process_media(image_path, topic):
-    print("[3/5] Dikey video, altyazı ve dinamik ses montajlanıyor...")
-    audio_file = "voice.mp3"
+    print("[3/5] Dikey dinamik video ve ekran yazısı işleniyor...")
     output_filename = "final_shorts.mp4"
     
-    script_text = generate_dynamic_text("script", topic)
-    print(f"Senaryo: '{script_text}'")
+    onscreen_text = generate_dynamic_text("onscreen", topic)
+    print(f"Ekran Yazısı: '{onscreen_text}'")
     
-    tts = gTTS(text=script_text, lang='en', slow=False)
-    tts.save(audio_file)
-    
-    audio_clip = AudioFileClip(audio_file)
-    duration = audio_clip.duration
-    
-    video_clip = add_subtitles_and_motion(image_path, script_text, duration)
-    final_clip = video_clip.set_audio(audio_clip)
+    # 12 Saniyelik Dinamik Sessiz Shorts Videosu
+    video_clip = add_subtitles_and_motion(image_path, onscreen_text, duration=12)
         
-    final_clip.write_videofile(
+    video_clip.write_videofile(
         output_filename, 
-        codec='libx264', 
-        audio_codec='aac',
-        temp_audiofile='temp-audio.m4a',
-        remove_temp=True,
+        codec='libx264',
         fps=30
     )
     
     video_clip.close()
-    audio_clip.close()
     return output_filename
 
 # --- 4. YOUTUBE YÜKLEME VE ETKİLEŞİM ---
@@ -178,7 +160,7 @@ def upload_and_interact(video_file, topic):
     body = {
         'snippet': {
             'title': f"{topic} #Shorts #Viral #Trending",
-            'description': f"Dynamic AI Short about {topic}.",
+            'description': f"Real-time AI Short about {topic}.",
             'tags': [topic, 'Shorts', 'Viral'],
             'categoryId': '28'
         },
@@ -193,15 +175,15 @@ def upload_and_interact(video_file, topic):
     video_id = response['id']
     print(f"BAŞARILI: Video Yüklendi! Video ID: {video_id}")
     
-    # Oto-Beğeni (Hata verirse akışı bozmaz)
+    # Otomatik Beğeni (Hata verirse aksaklık yaşanmaz)
     print("[5/5] Beğeni ve Yorum İşlemi...")
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
-        print("Like atıldı.")
+        print("Otomatik LIKE atıldı.")
     except Exception as e:
         print(f"Beğeni uyarısı (Önemsiz): {e}")
 
-    # Oto-Yorum
+    # Otomatik Yorum
     try:
         comment_text = generate_dynamic_text("comment", topic)
         youtube.commentThreads().insert(
@@ -217,7 +199,7 @@ def upload_and_interact(video_file, topic):
                 }
             }
         ).execute()
-        print(f"Yorum atıldı: '{comment_text}'")
+        print(f"Otomatik YORUM atıldı: '{comment_text}'")
     except Exception as e:
         print(f"Yorum uyarısı (Önemsiz): {e}")
 
