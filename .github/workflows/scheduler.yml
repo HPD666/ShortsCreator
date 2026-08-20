@@ -18,11 +18,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg & ImageMagick)
+        - name: Install Python Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick
-          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/' /etc/ImageMagick-6/policy.xml
+          python -m pip install --upgrade pip
+          pip install gtts google-generativeai moviepy==2.1.1 requests pillow google-api-python-client google-auth-oauthlib google-auth-httplib2
+
 
       - name: Install Python Dependencies
         run: |
