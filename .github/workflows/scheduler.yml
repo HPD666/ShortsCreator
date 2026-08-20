@@ -1,38 +1,30 @@
-name: Automatic 3D Shorts Generator
+name: Auto AI Shorts Generator
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Her 6 saatte bir otomatik çalışır
-  workflow_dispatch: # Manuel çalıştırma butonu
+    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
-  build-and-upload:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: Install System Dependencies (FFmpeg, ImageMagick & Fonts)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick fonts-dejavu
-          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/' /etc/ImageMagick-6/policy.xml
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Install Python Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install gtts google-generativeai moviepy==2.1.1 requests pillow google-api-python-client google-auth-oauthlib google-auth-httplib2 gradio_client numpy
-
-      - name: Run Main Automation Script
-        env:
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-        run: |
-          python main.py
+    - name: Run AI Script
+      env:
+        YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      run: |
+        python main.py
