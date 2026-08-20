@@ -1,29 +1,38 @@
-name: Run YouTube Shorts Creator
+name: Automatic 3D Shorts Generator
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Her gün otomatik çalışır
-  workflow_dispatch:      # Manuel tetikleme butonu
+    - cron: '0 */6 * * *' # Her 6 saatte bir otomatik çalışır
+  workflow_dispatch: # Manuel çalıştırma butonu
 
 jobs:
-  build:
+  build-and-upload:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install System Dependencies (FFmpeg & ImageMagick)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/' /etc/ImageMagick-6/policy.xml
+
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install moviepy gtts google-api-python-client google-auth-oauthlib google-auth-httplib2 requests pillow
+          pip install -r requirements.txt
 
-      - name: Run Script
+      - name: Run Main Automation Script
         env:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-          COMFYUI_URL: ${{ secrets.COMFYUI_URL }}
-        run: python main.py
+        run: |
+          python main.py
