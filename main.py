@@ -196,7 +196,7 @@ def upload_and_interact(video_file, topic, fact_text):
     
     body = {
         'snippet': {
-            'title': f"{topic} - Did You Know? 🤯 #Shorts #Facts #Viral",
+            'title': f"{topic} - Did You Know? 🤯 #Shorts #Facts #Viral #didyouknow #funfacts #fact #factoftheday",
             'description': f"Mind-blowing encyclopedic fact about {topic}: {fact_text}",
             'tags': [topic, 'Facts', 'Shorts', 'Viral', 'Trivia'],
             'categoryId': '27' # Education
