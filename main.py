@@ -32,7 +32,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. MODAL IMAGE & PERSISTENT VOLUME FOR MODEL CACHING
+# 1. LIGHTWEIGHT & BULLETPROOF MODAL IMAGE
 cache_volume = modal.Volume.from_name("ai-model-cache", create_if_missing=True)
 
 modal_image = (
@@ -42,26 +42,23 @@ modal_image = (
         "transformers",
         "accelerate",
         "torch",
-        "sentencepiece",
         "imageio-ffmpeg",
-        "hf-transfer",
         "huggingface_hub"
     )
     .env({
-        "HF_HUB_ENABLE_HF_TRANSFER": "1",
-        "HF_HOME": "/cache"  # Redirect HuggingFace downloads to persistent volume
+        "HF_HOME": "/cache"
     })
 )
 
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. 16GB RAM OPTIMIZED GPU RENDERER
+# 2. FAST & STABLE ANIMATEDIFF RENDERER (NO MORE CRASH-LOOPING)
 @app.cls(
     gpu="a10g", 
-    cpu=4.0, 
-    memory=16384,  # Kesin 16 GB sınırı (16 * 1024)
-    timeout=1200, 
+    cpu=2.0, 
+    memory=16384, 
+    timeout=600, 
     retries=0, 
     volumes={"/cache": cache_volume}
 )
@@ -69,19 +66,27 @@ class VideoGenerator:
     @modal.enter()
     def load_model(self):
         import torch
-        from diffusers import LTXPipeline
+        from diffusers import AnimateDiffPipeline, MotionAdapter, DDIMScheduler
 
-        print("⚡ Loading photorealistic LTX-Video model from persistent volume...", flush=True)
-        self.pipe = LTXPipeline.from_pretrained(
-            "Lightricks/LTX-Video",
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True  # 16 GB sınırında RAM patlamasını önleyen kritik parametre
-        )
-        self.pipe.enable_model_cpu_offload()
-        if hasattr(self.pipe, "enable_vae_slicing"):
-            self.pipe.enable_vae_slicing()
+        print("⚡ Loading lightweight AnimateDiff pipeline...", flush=True)
+        adapter = MotionAdapter.from_pretrained("guoyww/animatediff-motion-adapter-v1-5-2", torch_dtype=torch.float16)
         
-        print("✅ Container loaded and ready!", flush=True)
+        self.pipe = AnimateDiffPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5",
+            motion_adapter=adapter,
+            torch_dtype=torch.float16
+        )
+        
+        self.pipe.scheduler = DDIMScheduler.from_config(
+            self.pipe.scheduler.config,
+            clip_sample=False,
+            timestep_spacing="linspace",
+            beta_schedule="linear",
+            steps_offset=1
+        )
+        self.pipe.to("cuda")
+        self.pipe.enable_vae_slicing()
+        print("✅ Container loaded and ready in seconds!", flush=True)
 
     @modal.method()
     def render_all(self, prompts: list) -> list:
@@ -97,17 +102,16 @@ class VideoGenerator:
 
             print(f"🎬 Rendering Video {idx+1}/{len(prompts)}: '{prompt[:40]}...'", flush=True)
             
-            video_frames = self.pipe(
-                prompt=prompt,
+            output = self.pipe(
+                prompt=f"{prompt}, 8k resolution, photorealistic, cinematic, highly detailed",
+                negative_prompt="deformed, blurry, ugly, low quality, cartoon, anime",
                 num_inference_steps=20,
-                height=512,
-                width=512,
-                num_frames=25,
-                guidance_scale=3.0,
-            ).frames[0]
+                guidance_scale=7.5,
+                num_frames=16
+            )
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                export_to_video(video_frames, tmp.name, fps=8)
+                export_to_video(output.frames[0], tmp.name, fps=8)
                 with open(tmp.name, "rb") as f:
                     rendered_list.append(f.read())
 
@@ -171,18 +175,17 @@ def analyze_live_trends_for_t2v():
 
     logger.info(f"📌 Generated Title: '{final_video_title}'")
 
-    # Gemini'ye ihtiyaç duymadan garantili, fotogerçekçi promptlar
     parsed_data = [
         {
-            "prompt": "Cinematic photorealistic 8k dynamic action shot of a real person performing an extreme movement, dramatic studio cinematic lighting, ultra detailed",
+            "prompt": "Cinematic photorealistic dynamic action shot of a real person performing an extreme stunt",
             "text": "EPIC ACTION"
         },
         {
-            "prompt": "Hyper-realistic slow motion cinematic video of a professional athlete completing an intense viral challenge, 4k movie quality, high speed action",
+            "prompt": "Hyper-realistic slow motion video of a professional athlete completing a viral challenge",
             "text": "UNREAL SKILL"
         },
         {
-            "prompt": "Photorealistic 8k close up video of a person performing a high-energy action stunt, realistic skin textures, cinematic lighting",
+            "prompt": "Photorealistic close up video of a person performing a high-energy movement",
             "text": "MUST WATCH"
         }
     ]
