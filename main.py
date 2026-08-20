@@ -7,11 +7,10 @@ from gtts import gTTS
 from moviepy.editor import ImageClip, AudioFileClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 # --- GİTHUB SECRETS DOSYA DÖNÜŞTÜRÜCÜ ---
-# Secrets içinde duran JSON verilerini çalışma anında dosyaya yazar
 if os.getenv("YOUTUBE_CLIENT_SECRET") and not os.path.exists("client_secret.json"):
     with open("client_secret.json", "w") as f:
         f.write(os.getenv("YOUTUBE_CLIENT_SECRET"))
@@ -73,7 +72,7 @@ def get_trending_topic():
 
     raise Exception("Canlı veri kaynağı bulunamadı.")
 
-# --- 2. SIFIRDAN AI MATERYAL ÜRETİMİ (KESİNTİSİZ VE JETONSUZ) ---
+# --- 2. SIFIRDAN AI MATERYAL ÜRETİMİ ---
 def generate_100pct_ai_video(prompt_text):
     print(f"[2/5] Trend Konu ('{prompt_text}') için sıfırdan AI görsel materyali üretiliyor...")
     
@@ -106,7 +105,6 @@ def process_media(image_path, topic):
     tts.save(audio_file)
     
     audio_clip = AudioFileClip(audio_file)
-    
     video_clip = ImageClip(image_path).set_duration(audio_clip.duration)
     final_clip = video_clip.set_audio(audio_clip)
         
@@ -133,11 +131,13 @@ def get_youtube_client():
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
-        creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+    
+    # Oturum kapalıysa veya süresi dolduysa headless ortamda tazelemeye çalışır
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    elif not creds or not creds.valid:
+        raise Exception("Geçerli bir 'token.json' bulunamadı. Lütfen yerel bilgisayarınızda bir kez giriş yapıp token.json dosyasını GitHub Secrets'a ekleyin.")
+
     return build('youtube', 'v3', credentials=creds)
 
 def upload_and_interact(video_file, topic):
