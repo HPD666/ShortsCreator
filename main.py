@@ -2,19 +2,17 @@ import os
 import sys
 import time
 import re
+import json
 import logging
 import tempfile
+import requests
 import warnings
+import urllib.parse
 from pathlib import Path
 
-# Log akışını GitHub Actions üzerinde anlık (live) kıl
 sys.stdout.reconfigure(line_buffering=True)
-
 warnings.filterwarnings("ignore")
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-from gradio_client import Client
 from gtts import gTTS
 from moviepy import (
     VideoFileClip,
@@ -28,10 +26,11 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("pure-t2v-strict-queue")
+logger = logging.getLogger("comfyui-auto-engager")
 
 YT_API_KEY = os.environ.get("YT_API_KEY")
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
+REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "")
 
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
@@ -46,15 +45,13 @@ if not YT_API_KEY:
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="t2v-queue-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-comfyui-"))
 
 
-# 1. YOUTUBE TREND KONUSUNU ANLAYAN VE JENERİK KELİMELERİ TEMİZLEYEN ANALİZ MOTORU
-def analyze_youtube_context():
-    logger.info("🔥 YouTube trend videolarının konusu analiz ediliyor...")
-    
-    context_words = []
-    video_titles = []
+def extract_clean_context():
+    logger.info("🔍 YouTube trend içerikleri analiz ediliyor...")
+    words = []
+    titles = []
 
     try:
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
@@ -66,158 +63,159 @@ def analyze_youtube_context():
             maxResults=5,
             part='snippet'
         ).execute()
-        
-        # Yasaklı jenerik kelimeler listesi (Action shot, cinematic vb. temizleme)
-        forbidden_words = {
-            'shorts', 'video', 'youtube', 'http', 'https', 'subscribe', 'channel', 
-            'action', 'shot', 'cinematic', 'viral', 'trending', 'challenge', 'with', 'from'
-        }
+
+        forbidden = {'shorts', 'video', 'youtube', 'http', 'https', 'subscribe', 'channel', 'action', 'shot', 'cinematic'}
 
         for item in res.get('items', []):
-            title = item['snippet']['title']
-            desc = item['snippet'].get('description', '')
-            video_titles.append(title)
-            
-            clean_text = re.sub(r'[^\w\s]', '', f"{title} {desc}")
-            words = [
-                w.strip() for w in clean_text.split() 
-                if len(w) > 3 and w.lower() not in forbidden_words
-            ]
-            context_words.extend(words)
+            t = item['snippet']['title']
+            d = item['snippet'].get('description', '')
+            titles.append(t)
+            clean = re.sub(r'[^\w\s]', '', f"{t} {d}")
+            for w in clean.split():
+                if len(w) > 3 and w.lower() not in forbidden:
+                    words.append(w)
 
     except Exception as e:
         logger.warning(f"⚠️ YouTube API okuma uyarısı: {e}")
 
-    unique_words = list(dict.fromkeys(context_words))
-    main_topic = " ".join(unique_words[:3]) if unique_words else "Daily Unique Event"
+    unique_words = list(dict.fromkeys(words))
+    main_subject = " ".join(unique_words[:3]) if unique_words else "Unbelievable Daily Event"
 
-    # Sadece videonun gerçek konusunu işleyen saf prompt yapısı
     scenes = [
         {
-            "prompt": f"Video depicting {main_topic}, realistic movement, natural context",
+            "prompt": f"Raw realistic video of {main_subject}, dynamic natural motion, photorealistic",
             "text": unique_words[0].upper() if len(unique_words) > 0 else "LOOK AT THIS"
         },
         {
-            "prompt": f"Detailed video scene of {main_topic}, realistic environment",
-            "text": unique_words[1].upper() if len(unique_words) > 1 else "WHAT HAPPENS"
+            "prompt": f"Detailed video focusing on {main_subject}, continuous camera motion, sharp details",
+            "text": unique_words[1].upper() if len(unique_words) > 1 else "WAIT FOR IT"
         },
         {
-            "prompt": f"Focus video on {main_topic}, natural lighting and motion",
-            "text": unique_words[2].upper() if len(unique_words) > 2 else "MUST SEE"
+            "prompt": f"Full motion clip depicting {main_subject}, high resolution realistic scene",
+            "text": unique_words[2].upper() if len(unique_words) > 2 else "FINAL RESULT"
         }
     ]
 
-    final_title = f"{video_titles[0][:50]} #shorts #viral" if video_titles else f"{main_topic} #shorts"
-    logger.info(f"📌 Analiz Edilen Gerçek Konu: '{main_topic}'")
-    logger.info(f"📌 Hedef Video Başlığı: '{final_title}'")
-    
+    final_title = f"{titles[0][:50]} #shorts #viral" if titles else f"{main_subject} #shorts"
+    logger.info(f"📌 Tespit Edilen Ana Konu: '{main_subject}'")
     return scenes, final_title
 
 
-# 2. HER SANİYE SIRA KONTROLÜ YAPAN (STRICT 1-SECOND QUEUE POLLING) T2V MOTORU
-def render_video_strict_t2v_queue(prompt: str) -> str:
-    logger.info(f"⚡ HF Public T2V GPU alanlarına bağlanılıyor: '{prompt}'")
-    
-    # Text-To-Video Hizmeti Veren Aktif Kamusal Gradio Alanları
-    public_t2v_spaces = [
-        ("Wan-Video/Wan2.1-T2V-1.3B", "/predict"),
-        ("VideoCrafter/VideoCrafter", "/predict"),
-        ("damo-vilab/modelscope-text-to-video-synthesis", "/predict"),
-        ("artificialguybr/Text-To-Video-Alpha", "/predict")
-    ]
+def render_via_comfyui(prompt: str, index: int) -> str:
+    output_path = TMP_DIR / f"ai_generated_{index}.mp4"
 
-    for space, endpoint in public_t2v_spaces:
+    if COMFYUI_URL:
+        logger.info(f"⚡ ComfyUI Sunucusuna (`{COMFYUI_URL}`) T2V İstegi Gönderiliyor...")
+        workflow = {
+            "prompt": {
+                "3": {"inputs": {"seed": int(time.time()) + index, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal"}, "class_type": "KSampler"},
+                "6": {"inputs": {"text": prompt, "clip": ["11", 0]}, "class_type": "CLIPTextEncode"},
+                "10": {"inputs": {"filename_prefix": f"Shorts_{index}", "fps": 24, "images": ["3", 0]}, "class_type": "VHS_VideoCombine"}
+            }
+        }
         try:
-            logger.info(f"⏳ [{space}] alanına bağlanılıyor ve GPU sırasına giriliyor...")
-            kwargs = {"verbose": False}
-            if HF_TOKEN:
-                kwargs["hf_token"] = HF_TOKEN
-
-            client = Client(space, **kwargs)
-            job = client.submit(prompt, api_name=endpoint)
-
-            elapsed_seconds = 0
-            # HER SANİYE DÖNGÜSÜ: Bağlantıyı koparmadan sırayı saniye saniye takip eder
-            while not job.done():
-                time.sleep(1)
-                elapsed_seconds += 1
-                if elapsed_seconds % 5 == 0:  # Her 5 saniyede bir log akışına bilgi basar
-                    logger.info(f"⏳ [{space}] GPU Sırası Bekleniyor... ({elapsed_seconds} saniye tamamlandı)")
-
-            result = job.result()
-            video_path = result if isinstance(result, str) else (result[0] if isinstance(result, (list, tuple)) else None)
-
-            if video_path and str(video_path).lower().endswith(('.mp4', '.avi', '.mov', '.webm')):
-                logger.info(f"✅ [{space}] Video üretimi {elapsed_seconds}. saniyede tamamlandı: {video_path}")
-                return str(video_path)
-
+            req = requests.post(f"{COMFYUI_URL}/prompt", json=workflow, timeout=30)
+            if req.status_code == 200:
+                prompt_id = req.json().get("prompt_id")
+                for _ in range(120):
+                    time.sleep(2)
+                    history_res = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+                    if history_res.status_code == 200 and prompt_id in history_res.json():
+                        outputs = history_res.json()[prompt_id]['outputs']
+                        for node_id, node_out in outputs.items():
+                            if 'gifs' in node_out or 'videos' in node_out:
+                                filename = (node_out.get('gifs') or node_out.get('videos'))[0]['filename']
+                                video_bytes = requests.get(f"{COMFYUI_URL}/view?filename={filename}", timeout=30).content
+                                with open(output_path, 'wb') as f:
+                                    f.write(video_bytes)
+                                return str(output_path)
         except Exception as e:
-            logger.warning(f"⚠️ [{space}] alanında sıra beklenirken hata oluştu veya alan kapalı: {e}")
-            continue
+            logger.warning(f"⚠️ ComfyUI hatası: {e}. Alternatife geçiliyor.")
 
-    raise RuntimeError("❌ Kamuya açık hiçbir HF Text-To-Video alanında sıra alınamadı.")
+    if REPLICATE_API_TOKEN:
+        logger.info(f"⚡ Replicate API T2V kuyruğuna giriliyor...")
+        headers = {"Authorization": f"Token {REPLICATE_API_TOKEN}", "Content-Type": "application/json"}
+        payload = {"version": "be11f6c419130665b17ce377073e9722a48897665bd8a1f810aa78272f23e429", "input": {"prompt": prompt, "n_frames": 32, "steps": 25}}
+        res = requests.post("https://api.replicate.com/v1/predictions", headers=headers, json=payload, timeout=30)
+        if res.status_code in (200, 201):
+            get_url = res.json()["urls"]["get"]
+            for _ in range(120):
+                time.sleep(2)
+                check = requests.get(get_url, headers=headers, timeout=10).json()
+                if check["status"] == "succeeded":
+                    video_url = check["output"][0] if isinstance(check["output"], list) else check["output"]
+                    v_res = requests.get(video_url, timeout=30)
+                    with open(output_path, 'wb') as f:
+                        f.write(v_res.content)
+                    return str(output_path)
+                elif check["status"] == "failed":
+                    break
+
+    logger.info(f"⚡ Yedek AI Video Motoru çalıştırılıyor...")
+    encoded_p = urllib.parse.quote(prompt)
+    ai_video_url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=turbo&nologo=true"
+    
+    v_res = requests.get(ai_video_url, timeout=60)
+    if v_res.status_code == 200:
+        with open(output_path, 'wb') as f:
+            f.write(v_res.content)
+        return str(output_path)
+
+    raise RuntimeError("❌ Hiçbir AI Video motorundan çıktı alınamadı.")
 
 
-# 3. KESİNTİSİZ MONTAJ VE OTO-YÜKLEME
 def main():
-    scenes, video_title = analyze_youtube_context()
+    scenes, video_title = extract_clean_context()
     video_clips = []
 
     for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} T2V kuyruğuna gönderiliyor...")
-        video_file_path = render_video_strict_t2v_queue(scene["prompt"])
+        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} işleniyor...")
+        video_file = render_via_comfyui(scene["prompt"], idx)
         
-        clip = VideoFileClip(video_file_path)
-        
-        # 9:16 Dikey Kırpma
-        clip_resized = clip.resized(height=1920)
-        vertical_clip = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
+        if video_file.endswith(('.jpg', '.png', '.jpeg')):
+            from moviepy import ImageClip
+            clip = ImageClip(video_file).with_duration(3.5)
+            clip = clip.resized(height=1920).cropped(x_center=clip.w / 2, width=1080)
+            clip = clip.resized(lambda t: 1 + 0.05 * t)
+        else:
+            clip = VideoFileClip(video_file)
+            clip = clip.resized(height=1920).cropped(x_center=clip.w / 2, width=1080)
 
-        # Yazı Katmanı
         txt_clip = TextClip(
             text=scene["text"],
-            font_size=55,
+            font_size=60,
             color='yellow',
             stroke_color='black',
-            stroke_width=3,
+            stroke_width=4,
             method='caption',
             size=(900, 300)
-        ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
+        ).with_duration(clip.duration).with_position(('center', 0.70), relative=True)
 
-        # Ses Katmanı
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
-        if audio_clip.duration > vertical_clip.duration:
-            audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
+        if audio_clip.duration > clip.duration:
+            audio_clip = audio_clip.subclipped(0, clip.duration)
 
-        composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
+        composite = CompositeVideoClip([clip, txt_clip]).with_audio(audio_clip)
         video_clips.append(composite)
 
-    logger.info("🎬 Tüm AI video sahneleri birleştiriliyor...")
+    logger.info("🎬 Videolar montajlanıyor...")
     final_video = concatenate_videoclips(video_clips, method="compose")
     output_file = OUT_DIR / "short_video.mp4"
     final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
 
     if not os.path.exists('token.json'):
-        logger.error("❌ token.json dosyası bulunamadı. Yükleme iptal edildi.")
+        logger.error("❌ 'token.json' bulunamadı. Yükleme yapılamadı.")
         sys.exit(1)
 
-    logger.info("🚀 YouTube Shorts'a otomatik yükleniyor...")
+    logger.info("🚀 YouTube Shorts'a yükleniyor...")
     creds = Credentials.from_authorized_user_file('token.json')
     youtube = build('youtube', 'v3', credentials=creds)
 
     body = {
-        'snippet': {
-            'title': video_title,
-            'description': video_title,
-            'categoryId': '22'
-        },
-        'status': {
-            'privacyStatus': 'public',
-            'selfDeclaredMadeForKids': False,
-            'containsSyntheticMedia': True
-        }
+        'snippet': {'title': video_title, 'description': video_title, 'categoryId': '22'},
+        'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False, 'containsSyntheticMedia': True}
     }
     media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
     
@@ -225,12 +223,30 @@ def main():
     video_id = upload_response.get('id')
     logger.info(f"🎉 Başarıyla yüklendi! Video ID: {video_id}")
 
+    # OTOMATİK BEĞENME (LIKE)
     if video_id:
         try:
             youtube.videos().rate(id=video_id, rating='like').execute()
-            logger.info("👍 Otomatik beğenildi (Auto-liked)!")
+            logger.info("👍 Video otomatik olarak beğenildi (Auto-liked)!")
         except Exception as e:
-            logger.warning(f"Auto-like uyarısı: {e}")
+            logger.warning(f"⚠️ Otomatik beğenme sırasında uyarı: {e}")
+
+        # OTOMATİK YORUM KAZIMA / İLK YORUMU ATMA
+        try:
+            comment_body = {
+                'snippet': {
+                    'videoId': video_id,
+                    'topLevelComment': {
+                        'snippet': {
+                            'textOriginal': 'Subscribe for more daily shorts! 🔔'
+                        }
+                    }
+                }
+            }
+            youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
+            logger.info("💬 Otomatik sabit yorum eklendi!")
+        except Exception as e:
+            logger.warning(f"⚠️ Yorum eklenirken uyarı: {e}")
 
 
 if __name__ == "__main__":
