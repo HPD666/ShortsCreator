@@ -83,7 +83,7 @@ def generate_story_with_gemini(trends):
     Create a funny, surprising, 4-scene comic-book style story based on the most viral idea among these trends.
     For each scene:
     1. 'text': A very short spoken sentence for voiceover (MAX 3 to 5 words per scene).
-    2. 'prompt': A detailed 3D Pixar / Unreal Engine 5 animation prompt describing EXACTLY what is happening in 'text'. (Include parameters: 3D Pixar style, 8k render, vibrant lighting, highly detailed, no text on picture).
+    2. 'prompt': A detailed 3D Pixar / Unreal Engine 5 animation prompt describing EXACTLY what is happening in 'text'. (Include parameters: 3D Pixar style, 8k render, vibrant lighting, highly detailed, vertical 9:16 aspect ratio, no text on picture).
 
     Return ONLY a valid JSON object with this structure:
     {{
@@ -114,7 +114,6 @@ def generate_story_with_gemini(trends):
             logger.warning(f"⚠️ Gemini API hatası, yedek yapay zekaya geçiliyor: {e}")
 
     if not data or "scenes" not in data:
-        # YEDEK YAPAY ZEKA (Pollinations Free LLM)
         try:
             url = "https://text.pollinations.ai/"
             res = requests.post(url, json={"messages": [{"role": "user", "content": prompt_instruction}], "model": "openai"}, timeout=30)
@@ -131,10 +130,10 @@ def generate_story_with_gemini(trends):
         data = {
             "title": "Unbelievable 3D Story! 😱 #shorts #3d #viral",
             "scenes": [
-                {"text": "He found a mystery box.", "prompt": "3D Pixar character holding a glowing mystery box, highly detailed 3D Pixar style, 8k render, no text"},
-                {"text": "Inside was pure magic!", "prompt": "3D Pixar character looking amazed inside a glowing box with magical particles, vibrant lighting, no text"},
-                {"text": "It granted one wish.", "prompt": "3D Pixar character floating with golden magical energy around, epic lighting, no text"},
-                {"text": "The best day ever!", "prompt": "3D Pixar character celebrating happily outdoors, 3D animated style, 8k render, no text"}
+                {"text": "He found a mystery box.", "prompt": "3D Pixar character holding a glowing mystery box, highly detailed 3D Pixar style, 8k render, 9:16 vertical, no text"},
+                {"text": "Inside was pure magic!", "prompt": "3D Pixar character looking amazed inside a glowing box with magical particles, vibrant lighting, 9:16 vertical, no text"},
+                {"text": "It granted one wish.", "prompt": "3D Pixar character floating with golden magical energy around, epic lighting, 9:16 vertical, no text"},
+                {"text": "The best day ever!", "prompt": "3D Pixar character celebrating happily outdoors, 3D animated style, 8k render, 9:16 vertical, no text"}
             ]
         }
 
@@ -177,22 +176,23 @@ def main():
         
         duration = max(3.0, audio_clip.duration + 0.5)
 
-        # Görsel Katmanı
-        img_clip = ImageClip(image_file).with_duration(duration)
+        # Görsel Katmanı (1080x1920 Tam Ekran Sabitleme)
+        img_clip = ImageClip(image_file).resized((1080, 1920)).with_duration(duration)
 
-        # Ubuntu ortamında garanti çalışan DejaVuSans-Bold fontu
+        # Düzgün Sığan, Taşmayan Şık Altyazı
         txt_clip = TextClip(
             text=scene["text"],
             font="DejaVuSans-Bold",
-            font_size=60,
+            font_size=42,
             color='yellow',
             stroke_color='black',
-            stroke_width=5,
+            stroke_width=4,
             method='caption',
-            size=(950, 250)
-        ).with_duration(duration).with_position(('center', 0.78), relative=True)
+            size=(900, 180)
+        ).with_duration(duration).with_position(('center', 0.82), relative=True)
 
-        composite = CompositeVideoClip([img_clip, txt_clip]).with_audio(audio_clip)
+        # 1080x1920 Kompozisyon Ölçüsü
+        composite = CompositeVideoClip([img_clip, txt_clip], size=(1080, 1920)).with_audio(audio_clip)
         video_clips.append(composite)
 
     logger.info("🎬 Yapay Zeka Videosu İşleniyor...")
