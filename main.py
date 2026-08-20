@@ -4,6 +4,7 @@ import time
 import re
 import logging
 import tempfile
+import requests
 import warnings
 from pathlib import Path
 
@@ -15,7 +16,7 @@ warnings.filterwarnings("ignore")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-import modal
+import replicate
 from gtts import gTTS
 from moviepy import (
     VideoFileClip,
@@ -29,100 +30,12 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("ai-t2v-creator")
+logger = logging.getLogger("cloud-t2v-creator")
 
+# Secrets and OAuth Token Management
+REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
+YT_API_KEY = os.environ.get("YT_API_KEY")
 
-# 1. LIGHTWEIGHT & BULLETPROOF MODAL IMAGE
-cache_volume = modal.Volume.from_name("ai-model-cache", create_if_missing=True)
-
-modal_image = (
-    modal.Image.debian_slim()
-    .pip_install(
-        "diffusers",
-        "transformers",
-        "accelerate",
-        "torch",
-        "imageio-ffmpeg",
-        "huggingface_hub"
-    )
-    .env({
-        "HF_HOME": "/cache"
-    })
-)
-
-app = modal.App("ai-t2v-creator", image=modal_image)
-
-
-# 2. FAST & STABLE ANIMATEDIFF RENDERER (NO MORE CRASH-LOOPING)
-@app.cls(
-    gpu="a10g", 
-    cpu=2.0, 
-    memory=16384, 
-    timeout=600, 
-    retries=0, 
-    volumes={"/cache": cache_volume}
-)
-class VideoGenerator:
-    @modal.enter()
-    def load_model(self):
-        import torch
-        from diffusers import AnimateDiffPipeline, MotionAdapter, DDIMScheduler
-
-        print("⚡ Loading lightweight AnimateDiff pipeline...", flush=True)
-        adapter = MotionAdapter.from_pretrained("guoyww/animatediff-motion-adapter-v1-5-2", torch_dtype=torch.float16)
-        
-        self.pipe = AnimateDiffPipeline.from_pretrained(
-            "runwayml/stable-diffusion-v1-5",
-            motion_adapter=adapter,
-            torch_dtype=torch.float16
-        )
-        
-        self.pipe.scheduler = DDIMScheduler.from_config(
-            self.pipe.scheduler.config,
-            clip_sample=False,
-            timestep_spacing="linspace",
-            beta_schedule="linear",
-            steps_offset=1
-        )
-        self.pipe.to("cuda")
-        self.pipe.enable_vae_slicing()
-        print("✅ Container loaded and ready in seconds!", flush=True)
-
-    @modal.method()
-    def render_all(self, prompts: list) -> list:
-        import gc
-        import torch
-        import tempfile
-        from diffusers.utils import export_to_video
-
-        rendered_list = []
-        for idx, prompt in enumerate(prompts):
-            gc.collect()
-            torch.cuda.empty_cache()
-
-            print(f"🎬 Rendering Video {idx+1}/{len(prompts)}: '{prompt[:40]}...'", flush=True)
-            
-            output = self.pipe(
-                prompt=f"{prompt}, 8k resolution, photorealistic, cinematic, highly detailed",
-                negative_prompt="deformed, blurry, ugly, low quality, cartoon, anime",
-                num_inference_steps=20,
-                guidance_scale=7.5,
-                num_frames=16
-            )
-
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                export_to_video(output.frames[0], tmp.name, fps=8)
-                with open(tmp.name, "rb") as f:
-                    rendered_list.append(f.read())
-
-            gc.collect()
-            torch.cuda.empty_cache()
-            print(f"✅ Video {idx+1} rendered!", flush=True)
-
-        return rendered_list
-
-
-# OAuth Token Management
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
         with open('token.json', 'w') as f:
@@ -130,7 +43,9 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     except Exception as e:
         logger.warning(f"token.json could not be written: {e}")
 
-YT_API_KEY = os.environ.get("YT_API_KEY", None)
+if not REPLICATE_API_TOKEN or not YT_API_KEY:
+    logger.error("❌ REPLICATE_API_TOKEN and YT_API_KEY are required!")
+    sys.exit(1)
 
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
@@ -138,13 +53,9 @@ TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-t2v-"))
 
 
 def analyze_live_trends_for_t2v():
-    if not YT_API_KEY:
-        logger.error("❌ MISSING API KEY! YT_API_KEY is required.")
-        sys.exit(1)
-
-    logger.info("🔥 Live YouTube Shorts trends fetching...")
-    
+    logger.info("🔥 YouTube trend keywords fetching...")
     extracted_keywords = []
+    
     try:
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
         res = youtube.search().list(
@@ -158,109 +69,108 @@ def analyze_live_trends_for_t2v():
         
         for item in res.get('items', []):
             raw_title = item['snippet']['title']
-            clean_title = re.sub(r'[^\w\s]', '', raw_title) 
+            clean_title = re.sub(r'[^\w\s]', '', raw_title)
             words = [w for w in clean_title.split() if len(w) > 3 and w.lower() not in ['shorts', 'video', 'http', 'https', 'with']]
             extracted_keywords.extend(words)
-
     except Exception as e:
-        logger.warning(f"⚠️ YouTube API warning: {e}. Using fallback keywords.")
+        logger.warning(f"⚠️ YouTube API warning: {e}")
 
     unique_words = list(dict.fromkeys(extracted_keywords))[:4]
-    
-    if unique_words:
-        trend_phrase = " ".join(unique_words).title()
-        final_video_title = f"{trend_phrase} Trend #trend #viral #shorts"
-    else:
-        final_video_title = "Epic Extreme Action Challenge Trend #trend #viral #shorts"
+    trend_phrase = " ".join(unique_words).title() if unique_words else "Epic Extreme Action"
+    final_video_title = f"{trend_phrase} Trend #trend #viral #shorts"
 
-    logger.info(f"📌 Generated Title: '{final_video_title}'")
-
-    parsed_data = [
+    scenes = [
         {
-            "prompt": "Cinematic photorealistic dynamic action shot of a real person performing an extreme stunt",
+            "prompt": "Cinematic 8k photorealistic action movie scene, real person performing extreme movement, 35mm film style",
             "text": "EPIC ACTION"
         },
         {
-            "prompt": "Hyper-realistic slow motion video of a professional athlete completing a viral challenge",
+            "prompt": "Hyper-realistic slow motion cinematic video of a person completing viral skill stunt, photorealistic textures",
             "text": "UNREAL SKILL"
         },
         {
-            "prompt": "Photorealistic close up video of a person performing a high-energy movement",
+            "prompt": "Photorealistic 8k dynamic close up shot of a person high-energy challenge action, cinematic lighting",
             "text": "MUST WATCH"
         }
     ]
 
-    return parsed_data, final_video_title
+    logger.info(f"📌 Generated Title: '{final_video_title}'")
+    return scenes, final_video_title
+
+
+def render_video_cloud(prompt: str) -> str:
+    logger.info(f"⚡ Replicate LTX-Video cloud render launching: '{prompt[:35]}...'")
+    
+    output = replicate.run(
+        "lightricks/ltx-video:3b8b1d9c15849887b003b544321dd022b467b7e3ba6ef5d233cfed1d943b1f14",
+        input={
+            "prompt": prompt,
+            "negative_prompt": "cartoon, low quality, anime, worst quality, deformed, ugly",
+            "width": 704,
+            "height": 480,
+            "num_frames": 121,
+            "frame_rate": 25
+        }
+    )
+    
+    video_url = output if isinstance(output, str) else output[0]
+    
+    local_path = TMP_DIR / f"clip_{time.time()}.mp4"
+    r = requests.get(video_url, stream=True)
+    with open(local_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
+            
+    return str(local_path)
 
 
 def main():
     scenes, video_title = analyze_live_trends_for_t2v()
     video_clips = []
 
-    logger.info("🚀 Modal GPU session launching...")
-    with app.run():
-        generator = VideoGenerator()
-        prompts = [scene["prompt"] for scene in scenes]
+    for idx, scene in enumerate(scenes):
+        logger.info(f"🎬 Processing Clip {idx+1}/{len(scenes)}...")
+        video_file_path = render_video_cloud(scene["prompt"])
         
-        rendered_bytes_list = generator.render_all.remote(prompts)
+        clip = VideoFileClip(video_file_path)
+        
+        # 🎬 9:16 VERTICAL CROP
+        clip_resized = clip.resized(height=1920)
+        vertical_clip = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
 
-        for idx, (scene, video_bytes) in enumerate(zip(scenes, rendered_bytes_list)):
-            output_path = TMP_DIR / f"ai_generated_{idx}.mp4"
-            with open(output_path, "wb") as f:
-                f.write(video_bytes)
+        # 📝 TEXT OVERLAY
+        txt_clip = TextClip(
+            text=scene["text"],
+            font_size=55,
+            color='yellow',
+            stroke_color='black',
+            stroke_width=3,
+            method='caption',
+            size=(900, 300)
+        ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
 
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"✅ Processing Clip {idx+1}/3...")
-                clip = VideoFileClip(str(output_path))
+        # 🔊 TTS AUDIO
+        tts_path = TMP_DIR / f"tts_{idx}.mp3"
+        gTTS(text=scene["text"], lang='en').save(str(tts_path))
+        audio_clip = AudioFileClip(str(tts_path))
+        if audio_clip.duration > vertical_clip.duration:
+            audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
 
-                # 🎬 9:16 VERTICAL CROP
-                clip_resized = clip.resized(height=1920)
-                vertical_clip = clip_resized.cropped(
-                    x_center=clip_resized.w / 2, 
-                    width=1080
-                )
-
-                # 📝 TEXT OVERLAY
-                txt_clip = TextClip(
-                    text=scene["text"],
-                    font_size=55,
-                    color='yellow',
-                    stroke_color='black',
-                    stroke_width=3,
-                    method='caption',
-                    size=(900, 300)
-                ).with_duration(vertical_clip.duration).with_position(('center', 0.70), relative=True)
-
-                # 🔊 TTS AUDIO
-                tts_path = TMP_DIR / f"tts_audio_{idx}.mp3"
-                tts = gTTS(text=scene["text"], lang='en')
-                tts.save(str(tts_path))
-
-                audio_clip = AudioFileClip(str(tts_path))
-                if audio_clip.duration > vertical_clip.duration:
-                    audio_clip = audio_clip.subclipped(0, vertical_clip.duration)
-
-                composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
-                video_clips.append(composite)
+        composite = CompositeVideoClip([vertical_clip, txt_clip]).with_audio(audio_clip)
+        video_clips.append(composite)
 
     if not video_clips:
-        logger.error("❌ No AI video clips were generated.")
+        logger.error("❌ No video clips were processed.")
         sys.exit(1)
 
     try:
         logger.info("🎬 Stitching video clips & finalizing MP4...")
         final_video = concatenate_videoclips(video_clips, method="compose")
         output_file = OUT_DIR / "short_video.mp4"
-        
-        final_video.write_videofile(
-            str(output_file), 
-            fps=24, 
-            codec="libx264", 
-            audio_codec="aac", 
-            logger=None
-        )
+        final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
         logger.info(f"✅ Final video saved: {output_file}")
 
+        # 🚀 YOUTUBE UPLOAD & AUTO-LIKE
         if os.path.exists('token.json'):
             logger.info("🚀 Uploading to YouTube Shorts...")
             creds = Credentials.from_authorized_user_file('token.json')
