@@ -37,7 +37,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. MODAL IMAGE WITH HIGH-SPEED HF-TRANSFER
+# 1. PRE-DOWNLOAD MODEL WEIGHTS DIRECTLY INTO MODAL CONTAINER IMAGE
+def download_ltx_model():
+    import torch
+    from diffusers import LTXPipeline
+    print("📦 Pre-downloading LTX-Video weights into Modal Image layer...")
+    LTXPipeline.from_pretrained(
+        "Lightricks/LTX-Video",
+        torch_dtype=torch.bfloat16
+    )
+    print("✅ Model weights baked into image successfully!")
+
+
 modal_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -50,28 +61,30 @@ modal_image = (
         "hf-transfer"
     )
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .run_function(download_ltx_model)
 )
 
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. BULLETPROOF SINGLE-CONTAINER SEQUENTIAL RENDERER
-@app.cls(gpu="a10g", cpu=4.0, memory=24576, timeout=1200, retries=0)
+# 2. ULTRA-FAST GPU RENDERER USING PRE-CACHED MODEL
+@app.cls(gpu="a10g", cpu=4.0, memory=24576, timeout=600, retries=0)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
         import torch
         from diffusers import LTXPipeline
 
-        print("⚡ [GPU Container] Single worker loading LTX-Video model...", flush=True)
+        print("⚡ Loading LTX-Video from local cached layer...", flush=True)
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
-            torch_dtype=torch.bfloat16
+            torch_dtype=torch.bfloat16,
+            local_files_only=True
         )
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
-        print("✅ [GPU Container] Model successfully loaded once!", flush=True)
+        print("✅ Container ready in seconds!", flush=True)
 
     @modal.method()
     def render_all(self, prompts: list) -> list:
@@ -85,7 +98,7 @@ class VideoGenerator:
             gc.collect()
             torch.cuda.empty_cache()
 
-            print(f"🎬 [GPU Container] Rendering Video {idx+1}/{len(prompts)}: '{prompt[:40]}...'", flush=True)
+            print(f"🎬 Rendering Video {idx+1}/{len(prompts)}: '{prompt[:40]}...'", flush=True)
             
             video_frames = self.pipe(
                 prompt=prompt,
@@ -103,7 +116,7 @@ class VideoGenerator:
 
             gc.collect()
             torch.cuda.empty_cache()
-            print(f"✅ [GPU Container] Video {idx+1} complete!", flush=True)
+            print(f"✅ Video {idx+1} rendered!", flush=True)
 
         return rendered_list
 
@@ -156,7 +169,7 @@ def analyze_live_trends_for_t2v():
     )
     
     response = None
-    models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash']
+    models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash']
     
     for model_name in models_to_try:
         for attempt in range(3):
@@ -199,12 +212,11 @@ def main():
     scenes, video_title = analyze_live_trends_for_t2v()
     video_clips = []
 
-    logger.info("🚀 Modal GPU session launching single stable worker...")
+    logger.info("🚀 Modal GPU session launching with pre-cached model...")
     with app.run():
         generator = VideoGenerator()
         prompts = [scene["prompt"] for scene in scenes]
         
-        # Single container sequential execution guarantees NO crash loops
         rendered_bytes_list = generator.render_all.remote(prompts)
 
         for idx, (scene, video_bytes) in enumerate(zip(scenes, rendered_bytes_list)):
