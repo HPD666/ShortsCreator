@@ -37,16 +37,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("ai-t2v-creator")
 
 
-# 1. SAFE PRE-DOWNLOAD USING SNAPSHOT_DOWNLOAD (NO RAM OOM DURING BUILD)
-def download_ltx_model():
-    from huggingface_hub import snapshot_download
-    print("📦 Pre-downloading LTX-Video raw weights into Modal Image layer...", flush=True)
-    snapshot_download(
-        repo_id="Lightricks/LTX-Video",
-        allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model"]
-    )
-    print("✅ Model weights cached in image layer successfully!", flush=True)
-
+# 1. MODAL IMAGE & PERSISTENT VOLUME FOR MODEL CACHING
+cache_volume = modal.Volume.from_name("ai-model-cache", create_if_missing=True)
 
 modal_image = (
     modal.Image.debian_slim()
@@ -60,22 +52,31 @@ modal_image = (
         "hf-transfer",
         "huggingface_hub"
     )
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
-    .run_function(download_ltx_model)
+    .env({
+        "HF_HUB_ENABLE_HF_TRANSFER": "1",
+        "HF_HOME": "/cache"  # Redirect HuggingFace downloads to persistent volume
+    })
 )
 
 app = modal.App("ai-t2v-creator", image=modal_image)
 
 
-# 2. BULLETPROOF GPU RENDERER USING PRE-CACHED WEIGHTS
-@app.cls(gpu="a10g", cpu=4.0, memory=24576, timeout=1200, retries=0)
+# 2. GPU RENDERER WITH MOUNTED PERSISTENT VOLUME
+@app.cls(
+    gpu="a10g", 
+    cpu=4.0, 
+    memory=32768, 
+    timeout=1200, 
+    retries=0, 
+    volumes={"/cache": cache_volume}
+)
 class VideoGenerator:
     @modal.enter()
     def load_model(self):
         import torch
         from diffusers import LTXPipeline
 
-        print("⚡ Loading LTX-Video from pre-cached image layer...", flush=True)
+        print("⚡ Loading photorealistic LTX-Video model from persistent volume...", flush=True)
         self.pipe = LTXPipeline.from_pretrained(
             "Lightricks/LTX-Video",
             torch_dtype=torch.bfloat16
@@ -83,7 +84,10 @@ class VideoGenerator:
         self.pipe.enable_model_cpu_offload()
         if hasattr(self.pipe, "enable_vae_slicing"):
             self.pipe.enable_vae_slicing()
-        print("✅ Container loaded and ready instantly!", flush=True)
+        
+        # Save cache state to persistent volume
+        cache_volume.commit()
+        print("✅ Container loaded and model persistent cache committed!", flush=True)
 
     @modal.method()
     def render_all(self, prompts: list) -> list:
@@ -211,7 +215,7 @@ def main():
     scenes, video_title = analyze_live_trends_for_t2v()
     video_clips = []
 
-    logger.info("🚀 Modal GPU session launching with pre-cached model...")
+    logger.info("🚀 Modal GPU session launching...")
     with app.run():
         generator = VideoGenerator()
         prompts = [scene["prompt"] for scene in scenes]
