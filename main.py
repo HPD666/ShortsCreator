@@ -17,9 +17,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 def generate_dynamic_text(prompt_type, topic):
     model = genai.GenerativeModel('gemini-pro')
     if prompt_type == "script":
-        prompt = f"Write a viral, engaging 1-sentence YouTube Shorts narration about the real-time breaking news/topic: '{topic}'. Do not use hashtags or emojis."
+        prompt = f"Write a viral, engaging 1-sentence YouTube Shorts narration about the topic: '{topic}'. No emojis or hashtags."
     else:
-        prompt = f"Write an engaging short YouTube comment asking viewers their opinion on '{topic}'."
+        prompt = f"Write a short YouTube comment asking viewers their opinion on '{topic}'."
     
     try:
         response = model.generate_content(prompt)
@@ -28,15 +28,13 @@ def generate_dynamic_text(prompt_type, topic):
         print(f"Gemini Metin Üretim Hatası: {e}")
         raise e
 
-# --- 1. SIZDIRMAZ CANLI TREND TESPİTİ (HEADERS EKLEMESİ İLE) ---
+# --- 1. CANLI TREND TESPİTİ ---
 def get_trending_topic():
     print("[1/5] Canlı trend verileri sorgulanıyor...")
-    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
-    # 1. Yöntem: Google Trends RSS (Headers ile Blok Aşma)
     try:
         url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
         response = requests.get(url, headers=headers, timeout=10)
@@ -45,57 +43,55 @@ def get_trending_topic():
             items = root.findall('.//item/title')
             if items and items[0].text:
                 topic = items[0].text
-                print(f"Google Trends Üzerinden Yakalanan Trend: {topic}")
+                print(f"Google Trends: {topic}")
                 return topic
     except Exception as e:
         print(f"Google Trends Hatası: {e}")
 
-    # 2. Yöntem: Wikimedia Current Events API (Anlık Dünya Trendleri)
     try:
         wiki_url = "https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=10000&gscoord=37.7749|-122.4194&format=json"
         res = requests.get(wiki_url, headers=headers, timeout=10).json()
         pages = res.get('query', {}).get('geosearch', [])
         if pages:
             topic = pages[0]['title']
-            print(f"Wikipedia Canlı Akışından Yakalanan Trend: {topic}")
+            print(f"Wikipedia Canlı Akış: {topic}")
             return topic
     except Exception as e:
-        print(f"Wikipedia Trend Hatası: {e}")
+        print(f"Wikipedia Hatası: {e}")
 
-    # 3. Yöntem: HackerNews Top Headlines
-    try:
-        hn_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-        ids = requests.get(hn_url, timeout=10).json()
-        story_url = f"https://hacker-news.firebaseio.com/v0/item/{ids[0]}.json"
-        story = requests.get(story_url, timeout=10).json()
-        topic = story.get('title')
-        if topic:
-            print(f"HackerNews Üzerinden Yakalanan Trend: {topic}")
-            return topic
-    except Exception as e:
-        print(f"HackerNews Trend Hatası: {e}")
+    raise Exception("Canlı veri kaynağı bulunamadı.")
 
-    raise Exception("DİKKAT: Bütün canlı veri kaynakları engellendi, işlem durduruldu.")
-
-# --- 2. SIFIRDAN AI VİDEO ÜRETİMİ ---
+# --- 2. SIFIRDAN AI VİDEO ÜRETİMİ (GÜNCEL / AÇIK KULLANIMLI SPACE) ---
 def generate_100pct_ai_video(prompt_text):
     print(f"[2/5] Trend Konu ('{prompt_text}') için sıfırdan AI Video üretiliyor...")
-    try:
-        client = Client("damo-vilab/ModelScopeT2V")
-        result = client.predict(prompt_text, api_name="/predict")
-        
-        if isinstance(result, dict):
-            video_path = result.get('video') or result.get('name') or list(result.values())[0]
-        elif isinstance(result, (list, tuple)):
-            video_path = result[0]
-        else:
-            video_path = result
+    
+    # HF Token gerektirmeyen güncel açık kaynak T2V modeli
+    spaces = [
+        "fffilimonov/Text-to-Video",
+        "multimodalart/modelscope-tv"
+    ]
+    
+    for space in spaces:
+        try:
+            print(f"Denenen AI Model Space: {space}")
+            client = Client(space)
+            result = client.predict(prompt_text, api_name="/predict")
+            
+            if isinstance(result, dict):
+                video_path = result.get('video') or result.get('name') or list(result.values())[0]
+            elif isinstance(result, (list, tuple)):
+                video_path = result[0]
+            else:
+                video_path = result
 
-        print(f"Geçici Video Oluşturuldu: {video_path}")
-        return video_path
-    except Exception as e:
-        print(f"AI Video Üretim Hatası: {e}")
-        raise e
+            if video_path and os.path.exists(video_path):
+                print(f"Geçici Video Oluşturuldu: {video_path}")
+                return video_path
+        except Exception as e:
+            print(f"{space} alanında hata: {e}")
+            continue
+
+    raise Exception("Aktif AI Video servisi yanıt vermedi.")
 
 # --- 3. 9:16 DİKEY FORMAT VE SES MONTAJI ---
 def format_to_916(clip, target_w=1080, target_h=1920):
@@ -118,7 +114,7 @@ def process_media(video_path, topic):
     output_filename = "final_shorts.mp4"
     
     script_text = generate_dynamic_text("script", topic)
-    print(f"Üretilen Canlı Senaryo: '{script_text}'")
+    print(f"Üretilen Senaryo: '{script_text}'")
     
     tts = gTTS(text=script_text, lang='en', slow=False)
     tts.save(audio_file)
@@ -186,7 +182,7 @@ def upload_and_interact(video_file, topic):
     video_id = response['id']
     print(f"BAŞARILI: Video Yüklendi! Video ID: {video_id}")
     
-    print("[5/5] Beğeni ve Dinamik Yorum Atılıyor...")
+    print("[5/5] Beğeni ve Yorum Atılıyor...")
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
         print("LIKE Atıldı.")
@@ -211,7 +207,7 @@ def upload_and_interact(video_file, topic):
 # --- AKIŞ BAŞLATICI ---
 if __name__ == "__main__":
     trend = get_trending_topic()
-    prompt = f"cinematic viral vertical video of {trend}, 8k render, photorealistic, trending content"
+    prompt = f"cinematic vertical footage of {trend}, 8k render, photorealistic"
     
     generated_video = generate_100pct_ai_video(prompt)
     
@@ -219,4 +215,4 @@ if __name__ == "__main__":
         final_file = process_media(generated_video, trend)
         upload_and_interact(final_file, trend)
     else:
-        raise Exception("Geçerli video dosyası üretilemediği için süreç durduruldu.")
+        raise Exception("Geçerli video üretilemedi.")
