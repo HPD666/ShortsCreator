@@ -3,8 +3,10 @@ import sys
 import time
 import re
 import json
+import random
 import logging
 import tempfile
+import urllib.parse
 import requests
 import warnings
 from datetime import datetime, timedelta, timezone
@@ -53,11 +55,12 @@ TMP_DIR = Path(tempfile.mkdtemp(prefix="trend-viral-shorts-"))
 # 1. TREND VİDEO VERİLERİNİ ÇEKME
 def extract_trend_video_data():
     logger.info("🔍 Trend videolar taranıyor...")
-    
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
     youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
     
-    video_items = []
+    extracted_sentences = []
+    all_non_hashtag_words = []
+
     try:
         res = youtube.search().list(
             q='#shorts #trend #viral',
@@ -68,25 +71,17 @@ def extract_trend_video_data():
             maxResults=10,
             part='snippet'
         ).execute()
-        video_items = res.get('items', [])
+        
+        for item in res.get('items', []):
+            snippet = item.get('snippet', {})
+            screen_text = snippet.get('title', '')
+            screen_words = [w for w in screen_text.split() if not w.startswith('#')]
+            description = snippet.get('description', '')
+            desc_words = [w for w in description.split() if not w.startswith('#')]
+            all_non_hashtag_words.extend(desc_words)
+            extracted_sentences.append(f"Ekran: {' '.join(screen_words)} | Açıklama: {' '.join(desc_words)}")
     except Exception as e:
         logger.warning(f"⚠️ Trend arama uyarısı: {e}")
-
-    extracted_sentences = []
-    all_non_hashtag_words = []
-
-    for item in video_items:
-        snippet = item.get('snippet', {})
-        screen_text = snippet.get('title', '')
-        screen_words = [w for w in screen_text.split() if not w.startswith('#')]
-        clean_screen_text = " ".join(screen_words)
-
-        description = snippet.get('description', '')
-        desc_words = [word for word in description.split() if not word.startswith('#')]
-        clean_desc_text = " ".join(desc_words)
-
-        all_non_hashtag_words.extend(desc_words)
-        extracted_sentences.append(f"Ekran: {clean_screen_text} | Açıklama: {clean_desc_text}")
 
     return extracted_sentences, all_non_hashtag_words
 
@@ -170,49 +165,37 @@ def generate_story(extracted_sentences, all_words):
         return programmatic_fallback_engine(all_words)
 
 
-# 5. KESİNTİSİZ TEXT-TO-VIDEO MOTORU
+# 5. KESİNTİSİZ TEXT-TO-VIDEO AI MOTORU (ÇÖKME KORUMALI)
 def fetch_text_to_video(prompt: str, index: int) -> str:
-    logger.info(f"🎥 Sahne #{index+1} için TEXT-TO-VIDEO AI çağrılıyor...")
+    logger.info(f"🎥 Sahne #{index+1} için VIDEO AI çağrılıyor...")
 
-    # Halka açık ve çalışan aktif video alanları
+    # Sadece açık ve kamuya açık çalışan alanlar
     public_spaces = [
         "damo-vilab/modelscope-text-to-video-synthesis",
-        "multimodalart/cosmo-1-video",
         "ByteDance/AnimateDiff-Lightning"
     ]
 
     for space in public_spaces:
         try:
-            logger.info(f"⏳ Video AI deneniyor: '{space}'")
+            logger.info(f"⏳ Text-to-Video deneniyor: '{space}'")
             client = Client(space)
-            
-            # Dinamik tahmin çağrısı
-            res = None
-            try:
-                res = client.predict(prompt)
-            except Exception:
-                try:
-                    res = client.predict(prompt, api_name="/predict")
-                except Exception:
-                    pass
-
+            res = client.predict(prompt)
             if res and os.path.exists(str(res)):
-                logger.info(f"✅ Video başarıyla üretildi: {space}")
+                logger.info(f"✅ AI Video başarıyla üretildi: {space}")
                 return str(res)
         except Exception as e:
-            logger.warning(f"⚠️ Space pasif veya kapalı ({space}): {e}")
+            logger.warning(f"⚠️ Sunucu yanıt vermedi ({space}): {e}")
 
-    # HF servisleri kapalıysa otomatik dinamik render indirici (İşlemin yarıda kalmaması için)
-    logger.warning("⚠️ HF Video servisleri yanıt vermedi. Anlık yayın için yedek video akışı çekiliyor...")
+    # HF servisleri kapalı veya meşgulse akışın çökmemesi için hızlı alternatif video indirilir
+    logger.warning("⚠️ HF Video servisleri pasif. İşlemin 1 dakika içinde tamamlanması için hızlı video işleniyor...")
     backup_urls = [
         "https://assets.mixkit.co/videos/download/mixkit-vertical-shot-of-a-neon-city-at-night-42217-medium.mp4",
         "https://assets.mixkit.co/videos/download/mixkit-stars-in-the-night-sky-in-time-lapse-40019-medium.mp4",
         "https://assets.mixkit.co/videos/download/mixkit-aerial-view-of-waves-crashing-on-the-beach-41525-medium.mp4",
         "https://assets.mixkit.co/videos/download/mixkit-dramatic-clouds-and-sunset-in-the-sky-40899-medium.mp4"
     ]
-    target_url = backup_urls[index % len(backup_urls)]
     out_file = TMP_DIR / f"fast_render_{index}.mp4"
-    r = requests.get(target_url, timeout=20)
+    r = requests.get(backup_urls[index % len(backup_urls)], timeout=15)
     with open(out_file, 'wb') as f:
         f.write(r.content)
     return str(out_file)
