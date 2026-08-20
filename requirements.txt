@@ -1,6 +1,6 @@
+gTTS
 gradio_client
 google-generativeai
-gTTS
 moviepy>=2.0.0
 google-api-python-client
 google-auth-oauthlib
