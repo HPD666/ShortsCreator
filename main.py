@@ -14,21 +14,9 @@ from google.oauth2.credentials import Credentials
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-def get_active_gemini_model():
-    """API hesabında aktif olan ilk uygun metin modelini otomatik tespit eder."""
-    try:
-        models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for m in models:
-            if "flash" in m.name or "pro" in m.name:
-                return m.name
-        if models:
-            return models[0].name
-    except Exception as e:
-        print(f"Model listesi alınırken uyarı: {e}")
-    return "gemini-1.5-flash"
-
 def generate_dynamic_text(prompt_type, topic):
-    model_name = get_active_gemini_model()
+    # En güncel desteklenen Gemini modeli
+    model_name = 'gemini-3.6-flash'
     model = genai.GenerativeModel(model_name)
     
     if prompt_type == "script":
