@@ -122,21 +122,16 @@ def process_media(image_path, topic):
     return output_filename
 
 # --- 4. YOUTUBE OTO-YÜKLEME VE DİNAMİK ETKİLEŞİM ---
-SCOPES = [
-    'https://www.googleapis.com/auth/youtube.upload', 
-    'https://www.googleapis.com/auth/youtube.force-ssl'
-]
-
 def get_youtube_client():
     creds = None
     if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        # Scope parametresi kaldırıldı, token.json içindeki kendi izinleri kullanılır
+        creds = Credentials.from_authorized_user_file('token.json')
     
-    # Oturum kapalıysa veya süresi dolduysa headless ortamda tazelemeye çalışır
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
     elif not creds or not creds.valid:
-        raise Exception("Geçerli bir 'token.json' bulunamadı. Lütfen yerel bilgisayarınızda bir kez giriş yapıp token.json dosyasını GitHub Secrets'a ekleyin.")
+        raise Exception("Geçerli bir 'token.json' bulunamadı.")
 
     return build('youtube', 'v3', credentials=creds)
 
