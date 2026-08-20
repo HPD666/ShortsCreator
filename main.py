@@ -7,7 +7,6 @@ import logging
 import tempfile
 import requests
 import warnings
-import urllib.parse
 from pathlib import Path
 
 sys.stdout.reconfigure(line_buffering=True)
@@ -26,32 +25,35 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("comfyui-auto-engager")
+logger = logging.getLogger("comfyui-pure-video")
 
 YT_API_KEY = os.environ.get("YT_API_KEY")
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
-REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "")
 
 if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
     try:
         with open('token.json', 'w') as f:
             f.write(os.environ['TOKEN_JSON'])
     except Exception as e:
-        logger.warning(f"token.json okunamadı: {e}")
+        logger.warning(f"token.json yazılamadı: {e}")
 
 if not YT_API_KEY:
     logger.error("❌ YT_API_KEY zorunludur!")
     sys.exit(1)
 
+if not COMFYUI_URL:
+    logger.error("❌ COMFYUI_URL tanımlı değil! Sadece ComfyUI videosu üretilmesi istendiği için işlem durduruldu.")
+    sys.exit(1)
+
 OUT_DIR = Path("outputs")
 OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="ai-comfyui-"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="comfyui-video-"))
 
 
+# 1. TREND ANALİZİ
 def extract_clean_context():
     logger.info("🔍 YouTube trend içerikleri analiz ediliyor...")
-    words = []
-    titles = []
+    words, titles = [], []
 
     try:
         youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
@@ -64,7 +66,7 @@ def extract_clean_context():
             part='snippet'
         ).execute()
 
-        forbidden = {'shorts', 'video', 'youtube', 'http', 'https', 'subscribe', 'channel', 'action', 'shot', 'cinematic'}
+        forbidden = {'shorts', 'video', 'youtube', 'http', 'https', 'subscribe', 'channel'}
 
         for item in res.get('items', []):
             t = item['snippet']['title']
@@ -79,108 +81,90 @@ def extract_clean_context():
         logger.warning(f"⚠️ YouTube API okuma uyarısı: {e}")
 
     unique_words = list(dict.fromkeys(words))
-    main_subject = " ".join(unique_words[:3]) if unique_words else "Unbelievable Daily Event"
+    main_subject = " ".join(unique_words[:3]) if unique_words else "Unbelievable Event"
 
     scenes = [
         {
-            "prompt": f"Raw realistic video of {main_subject}, dynamic natural motion, photorealistic",
+            "prompt": f"Raw dynamic video of {main_subject}, smooth continuous motion, photorealistic video footage",
             "text": unique_words[0].upper() if len(unique_words) > 0 else "LOOK AT THIS"
         },
         {
-            "prompt": f"Detailed video focusing on {main_subject}, continuous camera motion, sharp details",
+            "prompt": f"Action video focusing on {main_subject}, continuous camera movement, high speed video",
             "text": unique_words[1].upper() if len(unique_words) > 1 else "WAIT FOR IT"
         },
         {
-            "prompt": f"Full motion clip depicting {main_subject}, high resolution realistic scene",
+            "prompt": f"Full motion video depicting {main_subject}, dynamic cinematic action scene",
             "text": unique_words[2].upper() if len(unique_words) > 2 else "FINAL RESULT"
         }
     ]
 
     final_title = f"{titles[0][:50]} #shorts #viral" if titles else f"{main_subject} #shorts"
-    logger.info(f"📌 Tespit Edilen Ana Konu: '{main_subject}'")
     return scenes, final_title
 
 
-def render_via_comfyui(prompt: str, index: int) -> str:
-    output_path = TMP_DIR / f"ai_generated_{index}.mp4"
+# 2. SAF COMFYUI VIDEO ÜRETİMİ (SADECE MP4/GIF VİDEO KABUL EDER)
+def render_comfyui_video(prompt: str, index: int) -> str:
+    output_path = TMP_DIR / f"comfy_video_{index}.mp4"
+    logger.info(f"⚡ ComfyUI Sunucusuna (`{COMFYUI_URL}`) Video İstegi Gönderiliyor... Sahne #{index+1}")
 
-    if COMFYUI_URL:
-        logger.info(f"⚡ ComfyUI Sunucusuna (`{COMFYUI_URL}`) T2V İstegi Gönderiliyor...")
-        workflow = {
-            "prompt": {
-                "3": {"inputs": {"seed": int(time.time()) + index, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal"}, "class_type": "KSampler"},
-                "6": {"inputs": {"text": prompt, "clip": ["11", 0]}, "class_type": "CLIPTextEncode"},
-                "10": {"inputs": {"filename_prefix": f"Shorts_{index}", "fps": 24, "images": ["3", 0]}, "class_type": "VHS_VideoCombine"}
-            }
+    # ComfyUI AnimateDiff / VHS Video Combine Workflow Payload
+    workflow = {
+        "prompt": {
+            "3": {"inputs": {"seed": int(time.time()) + index, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal"}, "class_type": "KSampler"},
+            "6": {"inputs": {"text": prompt, "clip": ["11", 0]}, "class_type": "CLIPTextEncode"},
+            "10": {"inputs": {"filename_prefix": f"Shorts_Vid_{index}", "fps": 24, "images": ["3", 0]}, "class_type": "VHS_VideoCombine"}
         }
-        try:
-            req = requests.post(f"{COMFYUI_URL}/prompt", json=workflow, timeout=30)
-            if req.status_code == 200:
-                prompt_id = req.json().get("prompt_id")
-                for _ in range(120):
-                    time.sleep(2)
-                    history_res = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
-                    if history_res.status_code == 200 and prompt_id in history_res.json():
-                        outputs = history_res.json()[prompt_id]['outputs']
-                        for node_id, node_out in outputs.items():
-                            if 'gifs' in node_out or 'videos' in node_out:
-                                filename = (node_out.get('gifs') or node_out.get('videos'))[0]['filename']
-                                video_bytes = requests.get(f"{COMFYUI_URL}/view?filename={filename}", timeout=30).content
-                                with open(output_path, 'wb') as f:
-                                    f.write(video_bytes)
-                                return str(output_path)
-        except Exception as e:
-            logger.warning(f"⚠️ ComfyUI hatası: {e}. Alternatife geçiliyor.")
+    }
 
-    if REPLICATE_API_TOKEN:
-        logger.info(f"⚡ Replicate API T2V kuyruğuna giriliyor...")
-        headers = {"Authorization": f"Token {REPLICATE_API_TOKEN}", "Content-Type": "application/json"}
-        payload = {"version": "be11f6c419130665b17ce377073e9722a48897665bd8a1f810aa78272f23e429", "input": {"prompt": prompt, "n_frames": 32, "steps": 25}}
-        res = requests.post("https://api.replicate.com/v1/predictions", headers=headers, json=payload, timeout=30)
-        if res.status_code in (200, 201):
-            get_url = res.json()["urls"]["get"]
-            for _ in range(120):
-                time.sleep(2)
-                check = requests.get(get_url, headers=headers, timeout=10).json()
-                if check["status"] == "succeeded":
-                    video_url = check["output"][0] if isinstance(check["output"], list) else check["output"]
-                    v_res = requests.get(video_url, timeout=30)
-                    with open(output_path, 'wb') as f:
-                        f.write(v_res.content)
-                    return str(output_path)
-                elif check["status"] == "failed":
-                    break
+    try:
+        req = requests.post(f"{COMFYUI_URL}/prompt", json=workflow, timeout=30)
+        req.raise_for_status()
+        prompt_id = req.json().get("prompt_id")
+        logger.info(f"⏳ ComfyUI İşleme Alındı (Prompt ID: {prompt_id}). Video bekleniyor...")
 
-    logger.info(f"⚡ Yedek AI Video Motoru çalıştırılıyor...")
-    encoded_p = urllib.parse.quote(prompt)
-    ai_video_url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=turbo&nologo=true"
-    
-    v_res = requests.get(ai_video_url, timeout=60)
-    if v_res.status_code == 200:
-        with open(output_path, 'wb') as f:
-            f.write(v_res.content)
-        return str(output_path)
+        for _ in range(180):  # Maksimum 6 dakika render süresi
+            time.sleep(2)
+            history_res = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+            if history_res.status_code == 200 and prompt_id in history_res.json():
+                outputs = history_res.json()[prompt_id]['outputs']
+                for node_id, node_out in outputs.items():
+                    # Sadece video veya gif çıktılarını yakala
+                    media_list = node_out.get('gifs') or node_out.get('videos')
+                    if media_list:
+                        filename = media_list[0]['filename']
+                        subfolder = media_list[0].get('subfolder', '')
+                        file_type = media_list[0].get('type', 'output')
 
-    raise RuntimeError("❌ Hiçbir AI Video motorundan çıktı alınamadı.")
+                        video_url = f"{COMFYUI_URL}/view?filename={filename}&subfolder={subfolder}&type={file_type}"
+                        video_bytes = requests.get(video_url, timeout=60).content
+
+                        with open(output_path, 'wb') as f:
+                            f.write(video_bytes)
+
+                        logger.info(f"✅ ComfyUI saf video dosyası başarıyla indirildi: {output_path}")
+                        return str(output_path)
+
+    except Exception as e:
+        raise RuntimeError(f"❌ ComfyUI Video Üretim Hatası: {e}")
+
+    raise RuntimeError("❌ ComfyUI sunucusundan geçerli bir video dosyası (.mp4/.gif) alınamadı.")
 
 
+# 3. MONTAJ VE OTOMASYON
 def main():
     scenes, video_title = extract_clean_context()
     video_clips = []
 
     for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} işleniyor...")
-        video_file = render_via_comfyui(scene["prompt"], idx)
-        
-        if video_file.endswith(('.jpg', '.png', '.jpeg')):
-            from moviepy import ImageClip
-            clip = ImageClip(video_file).with_duration(3.5)
-            clip = clip.resized(height=1920).cropped(x_center=clip.w / 2, width=1080)
-            clip = clip.resized(lambda t: 1 + 0.05 * t)
-        else:
-            clip = VideoFileClip(video_file)
-            clip = clip.resized(height=1920).cropped(x_center=clip.w / 2, width=1080)
+        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} ComfyUI ile işleniyor...")
+        video_file = render_comfyui_video(scene["prompt"], idx)
 
+        # Doğrudan Video Klibi olarak aç (Görsel dönüşümü veya ImageClip YOK)
+        clip = VideoFileClip(video_file)
+        clip_resized = clip.resized(height=1920)
+        clip_final = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
+
+        # Altyazı
         txt_clip = TextClip(
             text=scene["text"],
             font_size=60,
@@ -189,18 +173,19 @@ def main():
             stroke_width=4,
             method='caption',
             size=(900, 300)
-        ).with_duration(clip.duration).with_position(('center', 0.70), relative=True)
+        ).with_duration(clip_final.duration).with_position(('center', 0.70), relative=True)
 
+        # Ses
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
-        if audio_clip.duration > clip.duration:
-            audio_clip = audio_clip.subclipped(0, clip.duration)
+        if audio_clip.duration > clip_final.duration:
+            audio_clip = audio_clip.subclipped(0, clip_final.duration)
 
-        composite = CompositeVideoClip([clip, txt_clip]).with_audio(audio_clip)
+        composite = CompositeVideoClip([clip_final, txt_clip]).with_audio(audio_clip)
         video_clips.append(composite)
 
-    logger.info("🎬 Videolar montajlanıyor...")
+    logger.info("🎬 ComfyUI videoları birleştiriliyor...")
     final_video = concatenate_videoclips(video_clips, method="compose")
     output_file = OUT_DIR / "short_video.mp4"
     final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
@@ -227,11 +212,11 @@ def main():
     if video_id:
         try:
             youtube.videos().rate(id=video_id, rating='like').execute()
-            logger.info("👍 Video otomatik olarak beğenildi (Auto-liked)!")
+            logger.info("👍 Video otomatik olarak beğenildi!")
         except Exception as e:
-            logger.warning(f"⚠️ Otomatik beğenme sırasında uyarı: {e}")
+            logger.warning(f"⚠️ Otomatik beğenme uyarısı: {e}")
 
-        # OTOMATİK YORUM KAZIMA / İLK YORUMU ATMA
+        # OTOMATİK İLK YORUM
         try:
             comment_body = {
                 'snippet': {
@@ -244,9 +229,9 @@ def main():
                 }
             }
             youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-            logger.info("💬 Otomatik sabit yorum eklendi!")
+            logger.info("💬 Otomatik yorum eklendi!")
         except Exception as e:
-            logger.warning(f"⚠️ Yorum eklenirken uyarı: {e}")
+            logger.warning(f"⚠️ Yorum ekleme uyarısı: {e}")
 
 
 if __name__ == "__main__":
