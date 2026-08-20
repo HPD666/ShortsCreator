@@ -180,10 +180,10 @@ def main():
         # Görsel Katmanı
         img_clip = ImageClip(image_file).with_duration(duration)
 
-        # MoviePy v2.0 uyumlu TextClip (font zorunluluğu giderildi)
+        # Ubuntu ortamında garanti çalışan DejaVuSans-Bold fontu
         txt_clip = TextClip(
             text=scene["text"],
-            font="Liberation-Sans-Bold",
+            font="DejaVuSans-Bold",
             font_size=60,
             color='yellow',
             stroke_color='black',
