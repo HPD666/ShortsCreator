@@ -14,9 +14,23 @@ from google.oauth2.credentials import Credentials
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
+def get_active_gemini_model():
+    """API hesabında aktif olan ilk uygun metin modelini otomatik tespit eder."""
+    try:
+        models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        for m in models:
+            if "flash" in m.name or "pro" in m.name:
+                return m.name
+        if models:
+            return models[0].name
+    except Exception as e:
+        print(f"Model listesi alınırken uyarı: {e}")
+    return "gemini-1.5-flash"
+
 def generate_dynamic_text(prompt_type, topic):
-    # Güncel ve hızlı Gemini modeli kullanılıyor
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model_name = get_active_gemini_model()
+    model = genai.GenerativeModel(model_name)
+    
     if prompt_type == "script":
         prompt = f"Write a viral, engaging 1-sentence YouTube Shorts narration about the topic: '{topic}'. No emojis or hashtags."
     else:
@@ -26,7 +40,7 @@ def generate_dynamic_text(prompt_type, topic):
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"Gemini Metin Üretim Hatası: {e}")
+        print(f"Gemini Metin Üretim Hatası ({model_name}): {e}")
         raise e
 
 # --- 1. CANLI TREND TESPİTİ ---
