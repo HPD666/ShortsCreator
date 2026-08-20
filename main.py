@@ -14,7 +14,7 @@ sys.stdout.reconfigure(line_buffering=True)
 warnings.filterwarnings("ignore")
 
 from moviepy import (
-    VideoFileClip,
+    ImageClip,
     concatenate_videoclips
 )
 from googleapiclient.discovery import build
@@ -42,7 +42,7 @@ OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="3d-pure-"))
 
 
-# 1. TREND ANALİZİ VE YAZISIZ 3D PROMPT OLUŞTURMA
+# 1. TREND ANALİZİ VE YAZISIZ PROMPT
 def extract_clean_context():
     logger.info("🔍 YouTube trend içerikleri analiz ediliyor...")
     words, titles = [], []
@@ -75,7 +75,6 @@ def extract_clean_context():
     unique_words = list(dict.fromkeys(words))
     main_subject = " ".join(unique_words[:3]) if unique_words else "3D Animated World"
 
-    # Ekrana metin/altyazı basılmasını önleyen saf 3D prompt kalıbı
     style_suffix = "3D Pixar Unreal Engine 5 render, highly detailed 3D animation style, vibrant lighting, smooth digital art, 8k resolution, no text, no visual words, no watermark"
 
     scenes = [
@@ -88,16 +87,16 @@ def extract_clean_context():
     return scenes, final_title
 
 
-# 2. BULUT ÜZERİNDEN SAF 3D VİDEO ÜRETİMİ (SATIŞSIZ / COLAB'SIZ)
-def generate_3d_video(prompt: str, index: int) -> str:
-    output_path = TMP_DIR / f"3d_scene_{index}.mp4"
-    logger.info(f"⚡ 3D Animasyon Sahnesi İşleniyor... Sahne #{index+1}")
+# 2. BULUT ÜZERİNDEN SAF 3D GÖRSEL İNDİRME
+def generate_3d_image(prompt: str, index: int) -> str:
+    output_path = TMP_DIR / f"3d_scene_{index}.jpg"
+    logger.info(f"⚡ 3D Sahne Görseli İndiriliyor... Sahne #{index+1}")
 
     encoded_p = urllib.parse.quote(prompt)
     seed = int(time.time()) + index
-    video_url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=turbo&seed={seed}&nologo=true"
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_p}?width=1080&height=1920&model=turbo&seed={seed}&nologo=true"
 
-    response = requests.get(video_url, timeout=90)
+    response = requests.get(image_url, timeout=90)
     if response.status_code == 200:
         with open(output_path, 'wb') as f:
             f.write(response.content)
@@ -107,26 +106,25 @@ def generate_3d_video(prompt: str, index: int) -> str:
         raise RuntimeError(f"❌ 3D Motor Yanıt Vermedi (Status: {response.status_code})")
 
 
-# 3. YAZISIZ VİDEO BİRLEŞTİRME, YÜKLEME VE ETKİLEŞİM
+# 3. YAZISIZ VİDEO OLUŞTURMA VE YÜKLEME
 def main():
     scenes, video_title = extract_clean_context()
     video_clips = []
 
     for idx, scene in enumerate(scenes):
         logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} işleniyor...")
-        video_file = generate_3d_video(scene["prompt"], idx)
+        image_file = generate_3d_image(scene["prompt"], idx)
 
-        clip = VideoFileClip(video_file)
-        clip_resized = clip.resized(height=1920)
-        clip_final = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
-
-        # EKRANA HİÇBİR YAZI (TextClip) EKLENMİYOR, SAF VİDEO KULLANILIYOR
-        video_clips.append(clip_final)
+        # Görseli 4 Saniyelik Video Katmanına Dönüştür
+        clip = ImageClip(image_file).with_duration(4)
+        video_clips.append(clip)
 
     logger.info("🎬 Saf 3D Sahneler Birleştiriliyor...")
     final_video = concatenate_videoclips(video_clips, method="compose")
     output_file = OUT_DIR / "short_video.mp4"
-    final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
+    
+    # Videoyu Ses Olmadan Temiz İşle
+    final_video.write_videofile(str(output_file), fps=24, codec="libx264", logger=None)
 
     if not os.path.exists('token.json'):
         logger.error("❌ 'token.json' bulunamadı.")
