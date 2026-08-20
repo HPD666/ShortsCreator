@@ -1,332 +1,152 @@
 import os
-import sys
 import time
-import re
-import json
-import logging
-import tempfile
 import requests
-import warnings
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-sys.stdout.reconfigure(line_buffering=True)
-warnings.filterwarnings("ignore")
-
+from pytrends.request import TrendReq
 from gradio_client import Client
 from gtts import gTTS
-from moviepy import (
-    VideoFileClip,
-    TextClip,
-    AudioFileClip,
-    CompositeVideoClip,
-    ColorClip,
-    concatenate_videoclips
-)
+from moviepy.editor import VideoFileClip, AudioFileClip
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
-import google.generativeai as genai
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("trend-viral-bot")
-
-YT_API_KEY = os.environ.get("YT_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
+# --- 1. TREND TESPİTİ ---
+def get_trending_topic():
+    print("[1/5] Trendler analiz ediliyor...")
     try:
-        with open('token.json', 'w') as f:
-            f.write(os.environ['TOKEN_JSON'])
-        logger.info("🔑 token.json hazırlandı.")
+        pytrends = TrendReq(hl='en-US', tz=360)
+        trending = pytrends.trending_searches(pn='united_states')
+        topic = str(trending.iloc[0][0])
+        print(f"Tespit Edilen Trend Topic: {topic}")
+        return topic
     except Exception as e:
-        logger.warning(f"⚠️ token.json uyarısı: {e}")
+        print(f"Trend çekilemedi, varsayılan konu kullanılıyor: {e}")
+        return "Futuristic AI City"
 
-if not YT_API_KEY or not GEMINI_API_KEY:
-    logger.error("❌ YT_API_KEY ve GEMINI_API_KEY zorunludur!")
-    sys.exit(1)
-
-OUT_DIR = Path("outputs")
-OUT_DIR.mkdir(exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="trend-viral-shorts-"))
-
-
-# 1. TREND VİDEO VERİLERİNİ ÇEKME
-def extract_trend_video_data():
-    logger.info("🔍 YouTube'da o an en çok izlenen GERÇEK trend videolar çekiliyor...")
-    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
-    
-    trends = []
-    all_words = []
-
+# --- 2. SIFIRDAN AI VİDEO ÜRETİMİ (%100 Bedava HuggingFace ZeroGPU) ---
+def generate_100pct_ai_video(prompt):
+    print("[2/5] %100 AI Video sıfırdan üretiliyor (ZeroGPU)...")
     try:
-        res = youtube.search().list(
-            q='#shorts #trend #viral',
-            type='video',
-            videoDuration='short',
-            publishedAfter=seven_days_ago,
-            order='viewCount',
-            maxResults=10,
-            part='snippet'
-        ).execute()
-        
-        for item in res.get('items', []):
-            snippet = item.get('snippet', {})
-            title = snippet.get('title', '')
-            desc = snippet.get('description', '')
-            trends.append(title)
-            all_words.extend([w for w in (title + " " + desc).split() if not w.startswith('#')])
-
-        logger.info(f"📈 Bulunan Trend Başlıklar: {trends[:3]}")
-    except Exception as e:
-        logger.warning(f"⚠️ Trend arama uyarısı: {e}")
-
-    return trends, all_words
-
-
-# 2. YEDEK KOD SENARYOSU
-def programmatic_fallback_engine(all_words):
-    logger.info("⚡ YEDEK PROGRAM DEVREDE: Kod senaryosu oluşturuluyor...")
-    clean_words = [re.sub(r'[^\w\s]', '', w) for w in all_words if len(w) > 2]
-    if len(clean_words) < 16:
-        clean_words = ["viral", "trending", "amazing", "watch", "this", "moment", "incredible", "secret", "mindblowing", "today", "popular", "shorts", "video", "content", "best", "trend"]
-
-    chunk_size = max(3, len(clean_words) // 4)
-    scenes = [
-        {"text": " ".join(clean_words[0:chunk_size])[:30], "prompt": f"cinematic video of {clean_words[0]}, 8k"},
-        {"text": " ".join(clean_words[chunk_size:chunk_size*2])[:30], "prompt": f"action video of {clean_words[1]}, 8k"},
-        {"text": " ".join(clean_words[chunk_size*2:chunk_size*3])[:30], "prompt": f"aesthetic video of {clean_words[2]}, 8k"},
-        {"text": " ".join(clean_words[chunk_size*3:chunk_size*4])[:30], "prompt": f"epic climax video of {clean_words[3]}, 8k"}
-    ]
-    title = f"{clean_words[0].capitalize()} {clean_words[1].capitalize()} #trend #viral"
-    return scenes, title
-
-
-# 3. GEMINI AI SENARYO ÜRETİCİSİ
-def generate_story_with_gemini(trends, all_words):
-    logger.info("🧠 Gemini AI trendleri analiz ediyor ve %100 özgün senaryo üretiyor...")
-    
-    prompt_instruction = f"""
-    You are an AI video producer. Trending inputs: {json.dumps(trends[:5])}
-    Create a 4-scene viral script.
-    - Sentence in each scene: 4 to 6 words max.
-    - Prompts must describe dynamic moving 8k vertical 9:16 text-to-video scenes.
-    - Title MUST ONLY use hashtags #trend #viral.
-
-    Return ONLY a JSON object:
-    {{
-      "title": "Title #trend #viral",
-      "scenes": [
-        {{"text": "Short spoken sentence 1", "prompt": "Cinematic text-to-video scene 1"}},
-        {{"text": "Short spoken sentence 2", "prompt": "Cinematic text-to-video scene 2"}},
-        {{"text": "Short spoken sentence 3", "prompt": "Cinematic text-to-video scene 3"}},
-        {{"text": "Short spoken sentence 4", "prompt": "Cinematic text-to-video scene 4"}}
-      ]
-    }}
-    """
-    
-    # Güncel ve desteklenen Gemini modelleri
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro-latest"
-    ]
-    
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    for model_name in candidate_models:
-        try:
-            logger.info(f"🎯 Kullanılan Gemini Modeli: models/{model_name}")
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt_instruction)
-            if response and response.text:
-                match = re.search(r'\{.*\}', response.text.strip(), re.DOTALL)
-                if match:
-                    data = json.loads(match.group(0))
-                    return data["scenes"], data.get("title", "Trending Shorts #trend #viral")
-        except Exception as e:
-            logger.warning(f"⚠️ Model uyarısı ({model_name}): {e}")
-
-    logger.warning("⚠️ Tüm AI modelleri geçilemedi. Programmatik yedek senaryo yükleniyor.")
-    return programmatic_fallback_engine(all_words)
-
-
-# 4. VİDEO DOSYASI GEÇERLİLİK KONTROLÜ
-def is_valid_video_file(filepath: str) -> bool:
-    if not os.path.exists(filepath) or os.path.getsize(filepath) < 50000:
-        return False
-    try:
-        clip = VideoFileClip(filepath)
-        valid = clip.duration is not None and clip.duration > 0
-        clip.close()
-        return valid
-    except Exception:
-        return False
-
-
-# 5. KESİNTİSİZ VİDEO ÜRETİCİ
-def fetch_text_to_video(prompt: str, index: int) -> str:
-    logger.info(f"🎥 Sahne #{index+1} için VIDEO AI çağrılıyor...")
-
-    public_spaces = [
-        ("damo-vilab/modelscope-text-to-video-synthesis", None),
-        ("ByteDance/AnimateDiff-Lightning", None)
-    ]
-
-    for space, api in public_spaces:
-        try:
-            logger.info(f"⏳ Text-to-Video deneniyor: '{space}'")
-            client = Client(space)
-            res = client.predict(prompt, api_name=api) if api else client.predict(prompt)
-            
-            if res and is_valid_video_file(str(res)):
-                logger.info(f"✅ AI Video başarıyla üretildi: {space}")
-                return str(res)
-        except Exception as e:
-            logger.warning(f"⚠️ Sunucu pasif ({space}): {e}")
-
-    # Stok Video İndirme Güvenlik Ağı
-    backup_urls = [
-        "https://vjs.zencdn.net/v/oceans.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4"
-    ]
-    
-    out_file = TMP_DIR / f"video_{index}.mp4"
-    try:
-        r = requests.get(backup_urls[index % len(backup_urls)], timeout=15, stream=True)
-        if r.status_code == 200:
-            with open(out_file, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1024*1024):
-                    f.write(chunk)
-            if is_valid_video_file(str(out_file)):
-                return str(out_file)
-    except Exception as e:
-        logger.warning(f"⚠️ Stok video indirilemedi: {e}")
-
-    # Saf Python ColorClip (MoviePy 2.x Uyumlu)
-    logger.warning("⚠️ Dinamik renk katmanı oluşturuluyor...")
-    colors = [(25, 25, 50), (50, 15, 60), (15, 50, 60), (60, 25, 15)]
-    color = colors[index % len(colors)]
-    
-    fallback_clip = ColorClip(size=(1080, 1920), color=color).with_duration(4)
-    fallback_clip.write_videofile(str(out_file), fps=24, codec="libx264", logger=None)
-    fallback_clip.close()
-    return str(out_file)
-
-
-# 6. MONTAJ VE YOUTUBE UPLOAD
-def main():
-    trends, all_words = extract_trend_video_data()
-    scenes, video_title = generate_story_with_gemini(trends, all_words)
-    video_clips = []
-
-    for idx, scene in enumerate(scenes):
-        logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} hazırlanıyor: '{scene['text']}'")
-        
-        raw_video_path = fetch_text_to_video(scene["prompt"], idx)
-
-        # Seslendirme
-        tts_path = TMP_DIR / f"tts_{idx}.mp3"
-        gTTS(text=scene["text"], lang='en').save(str(tts_path))
-        audio_clip = AudioFileClip(str(tts_path))
-
-        # Video Formatlama (MoviePy 2.x Uyumlu Boyutlandırma ve Kırpma)
-        clip = VideoFileClip(raw_video_path)
-        w, h = clip.size
-
-        # Boyutlandırma: Yüksekliği 1920 olacak şekilde oranla
-        target_h = 1920
-        target_w = int(w * (target_h / h))
-        clip = clip.resized((target_w, target_h))
-
-        # Genişlik 1080'den küçükse genişliğe göre ölçekle
-        if clip.size[0] < 1080:
-            target_w = 1080
-            target_h = int(clip.size[1] * (target_w / clip.size[0]))
-            clip = clip.resized((target_w, target_h))
-
-        # 1080x1920 Dikey Formatı Sağlamak İçin Ortadan Kırp
-        clip = clip.cropped(
-            x_center=clip.size[0] / 2,
-            y_center=clip.size[1] / 2,
-            width=1080,
-            height=1920
+        client = Client("damo-vilab/ModelScopeT2V")
+        result = client.predict(
+            prompt,
+            api_name="/predict"
         )
+        print(f"AI Video başarıyla oluşturuldu: {result}")
+        return result
+    except Exception as e:
+        print(f"AI Video üretimi sırasında hata: {e}")
+        return None
 
-        duration = max(clip.duration, audio_clip.duration)
-        clip = clip.with_duration(duration)
+# --- 3. SES VE VİDEO BİRLEŞTİRME (gTTS Düzeltildi) ---
+def process_media(video_path, text_prompt):
+    print("[3/5] Yapay zeka sesi oluşturuluyor ve birleştiriliyor...")
+    audio_file = "voice.mp3"
+    output_filename = "final_shorts.mp4"
+    
+    # gTTS kullanımı doğru kütüphane adıyla çağrılıyor
+    tts = gTTS(text=f"Check out this viral trend: {text_prompt}", lang='en', slow=False)
+    tts.save(audio_file)
+    
+    video_clip = VideoFileClip(video_path)
+    audio_clip = AudioFileClip(audio_file)
+    
+    # Ses süresine göre videoyu döngüye al veya kırp
+    if video_clip.duration < audio_clip.duration:
+        final_clip = video_clip.loop(duration=audio_clip.duration).set_audio(audio_clip)
+    else:
+        final_clip = video_clip.set_duration(audio_clip.duration).set_audio(audio_clip)
+        
+    final_clip.write_videofile(
+        output_filename, 
+        codec='libx264', 
+        audio_codec='aac',
+        temp_audiofile='temp-audio.m4a',
+        remove_temp=True
+    )
+    
+    video_clip.close()
+    audio_clip.close()
+    return output_filename
 
-        # Altyazı
-        txt_clip = TextClip(
-            text=scene["text"],
-            font="DejaVuSans-Bold",
-            font_size=38,
-            color='yellow',
-            stroke_color='black',
-            stroke_width=4,
-            method='caption',
-            size=(920, 200)
-        ).with_duration(duration).with_position(('center', 0.80), relative=True)
+# --- 4. YOUTUBE YÜKLEME, LİKE VE YORUM SABİTLEME ---
+SCOPES = [
+    'https://www.googleapis.com/auth/youtube.upload', 
+    'https://www.googleapis.com/auth/youtube.force-ssl'
+]
 
-        composite = CompositeVideoClip([clip, txt_clip], size=(1080, 1920)).with_audio(audio_clip)
-        video_clips.append(composite)
+def get_youtube_client():
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        # Mevcut OAuth2 istemci dosyanız client_secret.json adıyla dizinde olmalıdır
+        flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
+        creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+    return build('youtube', 'v3', credentials=creds)
 
-    logger.info("🎬 Video Birleştiriliyor...")
-    final_video = concatenate_videoclips(video_clips, method="compose")
-    output_file = OUT_DIR / "short_video.mp4"
-    final_video.write_videofile(str(output_file), fps=24, codec="libx264", audio_codec="aac", logger=None)
-
-    # YouTube Yükleme
-    if not os.path.exists('token.json'):
-        logger.error("❌ 'token.json' bulunamadı.")
-        sys.exit(1)
-
-    logger.info("🚀 YouTube Shorts'a Yükleniyor...")
-    creds = Credentials.from_authorized_user_file('token.json')
-    youtube = build('youtube', 'v3', credentials=creds)
-
+def upload_and_interact(video_file, topic):
+    print("[4/5] YouTube Shorts yükleniyor...")
+    youtube = get_youtube_client()
+    
     body = {
         'snippet': {
-            'title': video_title,
-            'description': f"{video_title}\n\n#trend #viral"
+            'title': f"{topic} #Shorts #AI #Trending",
+            'description': f"100% AI Generated video about {topic}.",
+            'tags': [topic, 'Shorts', 'AI'],
+            'categoryId': '28'
         },
         'status': {
             'privacyStatus': 'public',
-            'selfDeclaredMadeForKids': False,
-            'containsSyntheticMedia': True
+            'selfDeclaredMadeForKids': False
         }
     }
-    media = MediaFileUpload(str(output_file), chunksize=-1, resumable=True, mimetype='video/mp4')
-
-    upload_response = youtube.videos().insert(part='snippet,status', body=body, media_body=media).execute()
-    video_id = upload_response.get('id')
-    logger.info(f"🎉 Video Yüklendi! ID: {video_id}")
-
-    if video_id:
-        time.sleep(10)
-        try:
-            youtube.videos().rate(id=video_id, rating='like').execute()
-            logger.info("👍 Otomatik beğenildi.")
-        except Exception:
-            pass
-
-        try:
-            comment_body = {
-                'snippet': {
-                    'videoId': video_id,
-                    'topLevelComment': {
-                        'snippet': {'textOriginal': '🔔 Subscribe for daily trend shorts! #trend #viral'}
+    
+    media = MediaFileUpload(video_file, chunksize=-1, resumable=True)
+    request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
+    response = request.execute()
+    video_id = response['id']
+    print(f"Video Başarıyla Yüklendi! Video ID: {video_id}")
+    
+    print("[5/5] Otomatik Beğeni ve Yorum Yapılıyor...")
+    
+    # 1. Beğeni Atma
+    try:
+        youtube.videos().rate(id=video_id, rating='like').execute()
+        print("Otomatik LIKE atıldı.")
+    except Exception as e:
+        print(f"Beğeni hatası: {e}")
+        
+    # 2. Otomatik Yorum Ekleme
+    try:
+        youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {
+                            "textOriginal": "This video was 100% generated by AI! What do you think? 👇"
+                        }
                     }
                 }
             }
-            youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-            logger.info("💬 Otomatik yorum eklendi.")
-        except Exception:
-            pass
+        ).execute()
+        print("Otomatik yorum eklendi.")
+    except Exception as e:
+        print(f"Yorum hatası: {e}")
 
-
+# --- AKIŞ BAŞLATICI ---
 if __name__ == "__main__":
-    main()
+    trend = get_trending_topic()
+    prompt_text = f"cinematic footage of {trend}, high quality, 8k render, trending on artstation"
+    
+    generated_video = generate_100pct_ai_video(prompt_text)
+    
+    if generated_video:
+        final_file = process_media(generated_video, trend)
+        upload_and_interact(final_file, trend)
+    else:
+        print("AI Video üretilemedi, işlem durduruldu.")
