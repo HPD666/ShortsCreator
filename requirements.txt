@@ -1,9 +1,8 @@
-google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
-huggingface_hub
-gradio_client
-requests
-pytrends
-gTTS
-moviepy
+google-api-python-client==2.118.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+gradio_client==0.10.0
+requests==2.31.0
+pytrends==4.9.2
+gTTS==2.5.1
+moviepy==1.0.3
