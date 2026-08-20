@@ -42,7 +42,7 @@ if not YT_API_KEY:
     sys.exit(1)
 
 if not COMFYUI_URL:
-    logger.error("❌ COMFYUI_URL tanımlı değil! Sadece ComfyUI videosu üretilmesi istendiği için işlem durduruldu.")
+    logger.error("❌ COMFYUI_URL tanımlı değil! İşlem durduruldu.")
     sys.exit(1)
 
 OUT_DIR = Path("outputs")
@@ -50,7 +50,6 @@ OUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path(tempfile.mkdtemp(prefix="comfyui-video-"))
 
 
-# 1. TREND ANALİZİ
 def extract_clean_context():
     logger.info("🔍 YouTube trend içerikleri analiz ediliyor...")
     words, titles = [], []
@@ -102,7 +101,6 @@ def extract_clean_context():
     return scenes, final_title
 
 
-# 2. SAF COMFYUI VİDEO ÜRETİMİ (RETRY / 502 BAD GATEWAY KORUMALI)
 def render_comfyui_video(prompt: str, index: int) -> str:
     output_path = TMP_DIR / f"comfy_video_{index}.mp4"
     logger.info(f"⚡ ComfyUI Sunucusuna (`{COMFYUI_URL}`) Video İsteği Gönderiliyor... Sahne #{index+1}")
@@ -115,7 +113,6 @@ def render_comfyui_video(prompt: str, index: int) -> str:
         }
     }
 
-    # 502/Ağ hatalarına karşı 5 defa yeniden deneme mekanizması
     response = None
     for attempt in range(1, 6):
         try:
@@ -130,7 +127,7 @@ def render_comfyui_video(prompt: str, index: int) -> str:
         time.sleep(5)
 
     if not response or "prompt_id" not in response:
-        raise RuntimeError("❌ ComfyUI sunucusuna erişilemedi (502 Bad Gateway veya Sunucu Kapalı). Colab hücresinin çalıştığından emin ol.")
+        raise RuntimeError("❌ ComfyUI sunucusuna erişilemedi. Colab hücresinin çalıştığından emin ol.")
 
     prompt_id = response.get("prompt_id")
     logger.info(f"⏳ ComfyUI İşleme Alındı (Prompt ID: {prompt_id}). Video bekleniyor...")
@@ -154,7 +151,7 @@ def render_comfyui_video(prompt: str, index: int) -> str:
                         with open(output_path, 'wb') as f:
                             f.write(video_bytes)
 
-                        logger.info(f"✅ ComfyUI saf video dosyası indirildi: {output_path}")
+                        logger.info(f"✅ ComfyUI video dosyası indirildi: {output_path}")
                         return str(output_path)
         except Exception:
             continue
@@ -162,7 +159,6 @@ def render_comfyui_video(prompt: str, index: int) -> str:
     raise RuntimeError("❌ ComfyUI video çıktısı zaman aşımına uğradı.")
 
 
-# 3. MONTAJ VE OTOMASYON
 def main():
     scenes, video_title = extract_clean_context()
     video_clips = []
