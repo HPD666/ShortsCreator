@@ -1,37 +1,29 @@
-name: Daily AI Shorts Generator
+name: Run YouTube Shorts Creator
 
 on:
   schedule:
-    - cron: '0 6  * * *'
-  workflow_dispatch:
+    - cron: '0 6 * * *'  # Her gün otomatik çalışır
+  workflow_dispatch:      # Manuel tetikleme butonu
 
 jobs:
-  generate-and-run:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Install Python Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install moviepy gtts google-api-python-client google-auth-oauthlib google-auth-httplib2 requests pillow
 
-      - name: Run Main Script
+      - name: Run Script
         env:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-        run: |
-          python main.py
+          COMFYUI_URL: ${{ secrets.COMFYUI_URL }}
+        run: python main.py
