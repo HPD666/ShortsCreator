@@ -1,3 +1,4 @@
+gradio_client
 google-generativeai
 gTTS
 moviepy>=2.0.0
@@ -6,4 +7,3 @@ google-auth-oauthlib
 google-auth-httplib2
 requests
 pillow
-gradio_client
