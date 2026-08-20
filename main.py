@@ -103,8 +103,7 @@ def generate_story_with_gemini(trends):
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
-            # Uyumluluk için güncel model adları sırasıyla denenir
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(prompt_instruction)
             raw_text = response.text.strip()
             raw_text = re.sub(r'```json\s*', '', raw_text)
@@ -127,7 +126,6 @@ def generate_story_with_gemini(trends):
         except Exception as e:
             logger.warning(f"⚠️ Yedek AI yanıt veremedi veya geçersiz JSON döndürdü: {e}")
 
-    # EĞER HER İKİSİ DE BAŞARISIZ OLURSA GÜVENLİ FALLBACK SENARYOSU
     if not data or "scenes" not in data:
         logger.info("🔄 Varsayılan güvenli 3D senaryosu devreye giriyor...")
         data = {
@@ -182,9 +180,10 @@ def main():
         # Görsel Katmanı
         img_clip = ImageClip(image_file).with_duration(duration)
 
-        # Az kelimeli, net okunur sarı çizgi roman altyazısı
+        # MoviePy v2.0 uyumlu TextClip (font zorunluluğu giderildi)
         txt_clip = TextClip(
             text=scene["text"],
+            font="Liberation-Sans-Bold",
             font_size=60,
             color='yellow',
             stroke_color='black',
