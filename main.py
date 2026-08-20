@@ -25,7 +25,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
-logger = logging.getLogger("comfyui-pure-video")
+logger = logging.getLogger("comfyui-pure-engine")
 
 YT_API_KEY = os.environ.get("YT_API_KEY")
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
@@ -35,7 +35,7 @@ if 'TOKEN_JSON' in os.environ and os.environ['TOKEN_JSON'].strip():
         with open('token.json', 'w') as f:
             f.write(os.environ['TOKEN_JSON'])
     except Exception as e:
-        logger.warning(f"token.json yazılamadı: {e}")
+        logger.warning(f"token.json okunamadı: {e}")
 
 if not YT_API_KEY:
     logger.error("❌ YT_API_KEY zorunludur!")
@@ -102,12 +102,11 @@ def extract_clean_context():
     return scenes, final_title
 
 
-# 2. SAF COMFYUI VIDEO ÜRETİMİ (SADECE MP4/GIF VİDEO KABUL EDER)
+# 2. SAF COMFYUI VİDEO ÜRETİMİ (RETRY / 502 BAD GATEWAY KORUMALI)
 def render_comfyui_video(prompt: str, index: int) -> str:
     output_path = TMP_DIR / f"comfy_video_{index}.mp4"
-    logger.info(f"⚡ ComfyUI Sunucusuna (`{COMFYUI_URL}`) Video İstegi Gönderiliyor... Sahne #{index+1}")
+    logger.info(f"⚡ ComfyUI Sunucusuna (`{COMFYUI_URL}`) Video İsteği Gönderiliyor... Sahne #{index+1}")
 
-    # ComfyUI AnimateDiff / VHS Video Combine Workflow Payload
     workflow = {
         "prompt": {
             "3": {"inputs": {"seed": int(time.time()) + index, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal"}, "class_type": "KSampler"},
@@ -116,19 +115,33 @@ def render_comfyui_video(prompt: str, index: int) -> str:
         }
     }
 
-    try:
-        req = requests.post(f"{COMFYUI_URL}/prompt", json=workflow, timeout=30)
-        req.raise_for_status()
-        prompt_id = req.json().get("prompt_id")
-        logger.info(f"⏳ ComfyUI İşleme Alındı (Prompt ID: {prompt_id}). Video bekleniyor...")
+    # 502/Ağ hatalarına karşı 5 defa yeniden deneme mekanizması
+    response = None
+    for attempt in range(1, 6):
+        try:
+            req = requests.post(f"{COMFYUI_URL}/prompt", json=workflow, timeout=40)
+            if req.status_code == 200:
+                response = req.json()
+                break
+            else:
+                logger.warning(f"⚠️ Bağlantı denemesi {attempt}/5 başarısız (Status: {req.status_code}). 5sn bekleniyor...")
+        except Exception as e:
+            logger.warning(f"⚠️ Bağlantı hatası deneme {attempt}/5: {e}")
+        time.sleep(5)
 
-        for _ in range(180):  # Maksimum 6 dakika render süresi
-            time.sleep(2)
-            history_res = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+    if not response or "prompt_id" not in response:
+        raise RuntimeError("❌ ComfyUI sunucusuna erişilemedi (502 Bad Gateway veya Sunucu Kapalı). Colab hücresinin çalıştığından emin ol.")
+
+    prompt_id = response.get("prompt_id")
+    logger.info(f"⏳ ComfyUI İşleme Alındı (Prompt ID: {prompt_id}). Video bekleniyor...")
+
+    for _ in range(180):
+        time.sleep(3)
+        try:
+            history_res = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=15)
             if history_res.status_code == 200 and prompt_id in history_res.json():
                 outputs = history_res.json()[prompt_id]['outputs']
                 for node_id, node_out in outputs.items():
-                    # Sadece video veya gif çıktılarını yakala
                     media_list = node_out.get('gifs') or node_out.get('videos')
                     if media_list:
                         filename = media_list[0]['filename']
@@ -141,13 +154,12 @@ def render_comfyui_video(prompt: str, index: int) -> str:
                         with open(output_path, 'wb') as f:
                             f.write(video_bytes)
 
-                        logger.info(f"✅ ComfyUI saf video dosyası başarıyla indirildi: {output_path}")
+                        logger.info(f"✅ ComfyUI saf video dosyası indirildi: {output_path}")
                         return str(output_path)
+        except Exception:
+            continue
 
-    except Exception as e:
-        raise RuntimeError(f"❌ ComfyUI Video Üretim Hatası: {e}")
-
-    raise RuntimeError("❌ ComfyUI sunucusundan geçerli bir video dosyası (.mp4/.gif) alınamadı.")
+    raise RuntimeError("❌ ComfyUI video çıktısı zaman aşımına uğradı.")
 
 
 # 3. MONTAJ VE OTOMASYON
@@ -159,12 +171,10 @@ def main():
         logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} ComfyUI ile işleniyor...")
         video_file = render_comfyui_video(scene["prompt"], idx)
 
-        # Doğrudan Video Klibi olarak aç (Görsel dönüşümü veya ImageClip YOK)
         clip = VideoFileClip(video_file)
         clip_resized = clip.resized(height=1920)
         clip_final = clip_resized.cropped(x_center=clip_resized.w / 2, width=1080)
 
-        # Altyazı
         txt_clip = TextClip(
             text=scene["text"],
             font_size=60,
@@ -175,7 +185,6 @@ def main():
             size=(900, 300)
         ).with_duration(clip_final.duration).with_position(('center', 0.70), relative=True)
 
-        # Ses
         tts_path = TMP_DIR / f"tts_{idx}.mp3"
         gTTS(text=scene["text"], lang='en').save(str(tts_path))
         audio_clip = AudioFileClip(str(tts_path))
@@ -208,7 +217,6 @@ def main():
     video_id = upload_response.get('id')
     logger.info(f"🎉 Başarıyla yüklendi! Video ID: {video_id}")
 
-    # OTOMATİK BEĞENME (LIKE)
     if video_id:
         try:
             youtube.videos().rate(id=video_id, rating='like').execute()
@@ -216,7 +224,6 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ Otomatik beğenme uyarısı: {e}")
 
-        # OTOMATİK İLK YORUM
         try:
             comment_body = {
                 'snippet': {
