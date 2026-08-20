@@ -98,9 +98,9 @@ def extract_trend_video_data():
     return extracted_sentences, all_non_hashtag_words
 
 
-# 2. YEDEK PROGRAM (COPILOT/AI ÇALIŞMAZSA DEVREYE GİREN SAF PYTHON KODU)
+# 2. YEDEK PROGRAM (AI ÇALIŞMAZSA SAF KOD ALGORİTMASI DEVREYE GİRER)
 def programmatic_fallback_engine(all_words):
-    logger.info("⚡ YEDEK PROGRAM DEVREDE: AI çalışmadığı için saf kod (program) senaryoyu üretiyor...")
+    logger.info("⚡ YEDEK PROGRAM DEVREDE: Saf Python algoritması senaryoyu oluşturuyor...")
     
     clean_words = [re.sub(r'[^\w\s]', '', w) for w in all_words if len(w) > 2]
     if len(clean_words) < 16:
@@ -123,21 +123,14 @@ def programmatic_fallback_engine(all_words):
     return scenes, title
 
 
-# 3. GEMINI AI ÇAĞRICI (AKILLI MODEL SEÇİMLİ)
+# 3. STABİL GEMINI AI MODEL SEÇİCİ
 def call_gemini_smart(prompt_instruction):
     genai.configure(api_key=GEMINI_API_KEY)
     
-    candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
-    
-    try:
-        available = [m.name.replace('models/', '') for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for m in available:
-            if m not in candidate_models:
-                candidate_models.insert(0, m)
-    except Exception as e:
-        logger.warning(f"⚠️ Model listesi taranamadı: {e}")
+    # Yalnızca standart metin üretimi modellerini doğrudan hedefle
+    standard_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
 
-    for m_name in candidate_models:
+    for m_name in standard_models:
         try:
             logger.info(f"🧠 Gemini modeli deneniyor: {m_name}")
             model = genai.GenerativeModel(m_name)
@@ -145,9 +138,9 @@ def call_gemini_smart(prompt_instruction):
             if res and res.text:
                 return res.text
         except Exception as e:
-            logger.warning(f"⚠️ Model '{m_name}' çalışmadı: {e}")
+            logger.warning(f"⚠️ Model '{m_name}' atlandı: {e}")
 
-    raise RuntimeError("Gemini AI yanıt vermedi.")
+    raise RuntimeError("Hiçbir standart Gemini modeli yanıt vermedi.")
 
 
 # 4. SENARYO OLUŞTURUCU
@@ -189,35 +182,33 @@ def generate_story(extracted_sentences, all_words):
         return programmatic_fallback_engine(all_words)
 
 
-# 5. GERÇEK VİDEO AI SERVİSLERİ (SIRA BEKLEME - UZUN TIMEOUT & RETRY)
+# 5. GERÇEK VİDEO AI SERVİSLERİ (DÜZELTİLMİŞ CLIENT BAĞLANTISI)
 def fetch_real_video_ai(prompt: str, index: int) -> str:
     logger.info(f"🎥 Sahne #{index+1} için GERÇEK VİDEO AI çağrılıyor...")
 
-    # Aktif çalışan Gerçek Text-to-Video Yapay Zeka Sunucuları
     video_spaces = [
         ("ByteDance/AnimateDiff-Lightning", "/generate"),
         ("guoyww/AnimateDiff", "/generate"),
-        ("ali-vilab/modelscope-text-to-video-synthesis", "/predict"),
-        ("CiroGarcía/ZeroScope_v2_dark", "/predict")
+        ("ali-vilab/modelscope-text-to-video-synthesis", "/predict")
     ]
 
     for space_name, api_endpoint in video_spaces:
-        for attempt in range(1, 3):  # Her servisi 2 kere dene
+        for attempt in range(1, 3):
             try:
-                logger.info(f"⏳ [{attempt}/2] HF Video AI Kuyruğuna Giriliyor: '{space_name}' (Sıra bekleniyor...)")
+                logger.info(f"⏳ [{attempt}/2] HF Video AI Kuyruğuna Giriliyor: '{space_name}'")
                 
-                # Timeout süresi 600 saniye (10 DAKİKA). Kuyrukta sırasını bekler, erken vazgeçmez.
-                client = Client(space_name, timeout=600)
+                # 'timeout' parametresi kaldırıldı, bağlantı hatası düzeltildi
+                client = Client(space_name)
                 
                 result = client.predict(prompt, api_name=api_endpoint)
                 if result and os.path.exists(str(result)):
-                    logger.info(f"✅ GERÇEK VİDEO BÜTÜNÜYLE ÜRETİLDİ VE İNDİRİLDİ: {space_name}")
+                    logger.info(f"✅ GERÇEK VİDEO BAŞARIYLA ÜRETİLDİ: {space_name}")
                     return str(result)
             except Exception as e:
-                logger.warning(f"⚠️ '{space_name}' (Deneme {attempt}) sıra beklenirken meşgul/hata verdi: {e}")
-                time.sleep(5)
+                logger.warning(f"⚠️ '{space_name}' (Deneme {attempt}) sıra beklenirken/hata verdi: {e}")
+                time.sleep(3)
 
-    raise RuntimeError(f"❌ Sahne #{index+1} için Video AI sunucuları meşguldü.")
+    raise RuntimeError(f"❌ Sahne #{index+1} için Video AI sunucularına ulaşılamadı.")
 
 
 # 6. MONTAJ VE YOUTUBE SHORTS YÜKLEME
@@ -229,7 +220,6 @@ def main():
     for idx, scene in enumerate(scenes):
         logger.info(f"🎬 Sahne {idx+1}/{len(scenes)} hazırlanıyor: '{scene['text']}'")
         
-        # SADECE GERÇEK VİDEO AI KULLANILIR
         raw_video_path = fetch_real_video_ai(scene["prompt"], idx)
 
         # Seslendirme (gTTS)
