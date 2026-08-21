@@ -2,7 +2,14 @@ name: Daily Fact YouTube Shorts Creator
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    # 09:00 AM UTC - Morning Rush
+    - cron: '0 9 * * *'
+    # 01:00 PM UTC - Lunch Break
+    - cron: '0 13 * * *'
+    # 05:00 PM UTC - Evening Rush
+    - cron: '0 17 * * *'
+    # 09:00 PM UTC - Late Night Scroll
+    - cron: '0 21 * * *'
   workflow_dispatch:
 
 jobs:
@@ -36,7 +43,7 @@ jobs:
       - name: Keep Alive
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           date > keep_alive.txt
           git add keep_alive.txt
           git commit -m "Keep alive: $(date)" || exit 0
