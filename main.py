@@ -19,7 +19,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. DOĞRULANMIŞ, SADE VE TEKRARSIZ BİLGİ ÜRETİMİ
+# 1. GÜNCEL GEMINI MODELLERİ İLE TEKRARSIZ BİLGİ ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY bulunamadı!")
@@ -41,7 +41,8 @@ def generate_fact_and_image_prompt():
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash']
+    # Güncel çalışan modeller
+    candidate_models = ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
     response = None
 
     for model_name in candidate_models:
@@ -78,7 +79,7 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ HİÇBİR ŞEKİLDE BÜKMEDEN/YAMULTMADAN KUSURSUZ KESME (1080x1920)
+# 2. GÖRSELİ YAMULTMADAN KESEN AKILLI CROP (1080x1920)
 def download_ai_image(image_prompt):
     encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, 8k resolution, cinematic lighting, masterpiece")
     seed = random.randint(100000, 999999)
@@ -90,7 +91,6 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        # En-boy oranını bozmadan merkeze oturtup kırpma (Center-Crop)
         target_w, target_h = 1080, 1920
         img_w, img_h = img.size
         
@@ -107,14 +107,13 @@ def download_ai_image(image_prompt):
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. 3 KADEMELİ YEDEKLİ %100 GARANTİLİ MÜZİK İNDİRİCİ (CC0 PUBLIC DOMAIN)
+# 3. YEDEKLİ MÜZİKLİ İNDİRME SİSTEMİ (CC0 PUBLIC DOMAIN)
 def download_background_music():
     music_path = "bg_music.mp3"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
-    # 3 Farklı yüksek kaliteli ve hızlı müzik sunucusu
     music_urls = [
         "https://freepd.com/music/Neon%20Groove.mp3",
         "https://freepd.com/music/Unstoppable.mp3",
@@ -128,14 +127,14 @@ def download_background_music():
             if resp.status_code == 200 and len(resp.content) > 50000:
                 with open(music_path, "wb") as f:
                     f.write(resp.content)
-                print("✅ Müzik başarıyla hazırlandı.")
+                print("✅ Müzik başarıyla indirildi.")
                 return music_path
         except Exception as e:
             print(f"⚠️ Kaynak {index} hatası ({e}), sonraki deneniyor...")
             
     raise RuntimeError("Müzik kaynaklarının hiçbirine ulaşılamadı!")
 
-# 4. ŞIK SİYAH KUTULU METİN TASARIMI
+# 4. YARI SAYDAM SİYAH KUTULU YAZI KATMANI
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -209,7 +208,7 @@ def get_youtube_client():
         
     return build("youtube", "v3", credentials=creds)
 
-# 6. %100 SAFE YOUTUBE YÜKLEME (BEĞENİ VE YORUM İŞLEMLERİ TAMAMEN KALDIRILDI)
+# 6. SADECE GÜVENLİ YOUTUBE YÜKLEME
 def upload_to_youtube(video_path, fact_text):
     youtube = get_youtube_client()
     
@@ -232,7 +231,7 @@ def upload_to_youtube(video_path, fact_text):
     video_id = res.get('id')
     print(f"✅ Video başarıyla yüklendi! Video ID: {video_id}")
 
-# 7. VİDEO BİRLEŞTİRME
+# 7. VİDEO İŞLEME
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
