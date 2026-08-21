@@ -20,14 +20,21 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudio
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
+# 1. HER SEFERİNDE BENZERSİZ VE SONSUZ FARKLI BİLGİ ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY eksik!")
 
+    # Rastgele konular ekleyerek Gemini'nin tekrara düşmesini engelliyoruz
+    categories = ["space astronomy", "deep sea biology", "bizarre history", "quantum physics", "human body mystery", "ancient civilizations", "nature marvels"]
+    chosen_category = random.choice(categories)
+    random_seed = random.randint(100000, 999999)
+
     prompt = (
-        "Generate a JSON response with two keys:\n"
-        "1. 'fact': TODAY'S FACT! A mind-blowing, short scientific or historical fact in English (under 20 words). Direct and engaging.\n"
+        f"Generate a unique JSON response with two keys.\n"
+        f"Randomization Seed: {random_seed}\n"
+        f"Category Focus: {chosen_category}\n"
+        "1. 'fact': TODAY'S FACT! A mind-blowing, extremely unique scientific or historical fact in English (under 20 words). Do not repeat common facts like octopus hearts or honey spoil.\n"
         "2. 'image_prompt': A highly detailed, realistic, vertical visual description in English to generate an AI image matching this exact fact.\n"
         "Return ONLY raw JSON in this format: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
@@ -70,10 +77,10 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ GÖREV ORANINI BOZMADAN MERKEZİ KIRPARAK 1080x1920 YAPMA (ORANTI BOZULMAZ)
+# 2. GÖRSELİ YAMULTMADAN AKILLI MERKEZİ KIRPMA İLE 1080x1920 YAPMA
 def download_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"9:16 vertical orientation, {image_prompt}, cinematic, masterpiece, highly detailed")
-    seed = random.randint(10000, 99999)
+    encoded_prompt = urllib.parse.quote(f"9:16 portrait vertical aspect ratio, {image_prompt}, cinematic, masterpiece, highly detailed")
+    seed = random.randint(100000, 999999)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
     
     print("AI Görseli indiriliyor...")
@@ -82,35 +89,36 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        # En-boy oranını esnetmeden 1080x1920 boyutuna tam merkez kırpma (Crop)
         target_w, target_h = 1080, 1920
         img_w, img_h = img.size
         
-        scale = max(target_w / img_w, target_h / img_h)
-        new_w, new_h = int(img_w * scale), int(img_h * scale)
-        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        # En-boy oranını hiç bozmadan büyütüp fazla kısımları merkezden kesme
+        ratio = max(target_w / img_w, target_h / img_h)
+        new_w = int(img_w * ratio)
+        new_h = int(img_h * ratio)
+        
+        resized_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
         left = (new_w - target_w) // 2
         top = (new_h - target_h) // 2
         right = left + target_w
         bottom = top + target_h
         
-        cropped_img = img.crop((left, top, right, bottom))
+        cropped_img = resized_img.crop((left, top, right, bottom))
         cropped_img.save(fixed_bg_path, quality=95)
         return fixed_bg_path
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. TELİFSİZ VE KREDİ GEREKTİRMEYEN HAREKETLİ ARKA PLAN MÜZİĞİ İNDİRME
+# 3. HAREKETLİ, YÜKSEK TEMPOLU TELİFSİZ ARKA PLAN MÜZİĞİ (CC0 PUBLIC DOMAIN)
 def download_background_music():
     music_path = "bg_music.mp3"
-    # %100 CC0 Public Domain güvenilir arka plan müzik adresi
-    music_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # FreePD - Upbeat Energetic Electronic Track (Tamamen telifsiz / Atıf gerektirmez)
+    music_url = "https://freepd.com/music/Neon%20Groove.mp3"
     
     try:
-        print("Arka plan müziği indiriliyor...")
-        resp = requests.get(music_url, headers=headers, timeout=30)
+        print("Hareketli arka plan müziği indiriliyor...")
+        resp = requests.get(music_url, timeout=30)
         if resp.status_code == 200:
             with open(music_path, "wb") as f:
                 f.write(resp.content)
@@ -143,7 +151,6 @@ def overlay_text_on_image(text, width=1080, height=1920):
     line_spacing = 14
     total_text_height = sum(line_heights) + (len(wrapped_lines) - 1) * line_spacing
     
-    # Shorts arayüzünün üstüne düşmemesi için yüksekliğin %25'ine koyuyoruz
     y_start = int(height * 0.25)
     
     padding = 28
@@ -152,7 +159,6 @@ def overlay_text_on_image(text, width=1080, height=1920):
     box_right = (width + max_line_width) // 2 + padding
     box_bottom = y_start + total_text_height + padding
     
-    # Yarı saydam yuvarlatılmış siyah arka plan
     draw.rounded_rectangle(
         [box_left, box_top, box_right, box_bottom],
         radius=20,
@@ -166,7 +172,6 @@ def overlay_text_on_image(text, width=1080, height=1920):
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         
-        # Gölge + Yazı
         draw.text((x + 2, current_y + 2), line, font=font, fill=(0, 0, 0, 255))
         draw.text((x, current_y), line, font=font, fill=(255, 255, 255, 255))
         current_y += text_h + line_spacing
@@ -266,7 +271,8 @@ def build_shorts_video():
     audio_tracks = [voice_clip]
     if bg_music_path and os.path.exists(bg_music_path):
         try:
-            bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.15)
+            # Müzik ses seviyesi %45 yapıldı (Daha yüksek ve duyulur ritim)
+            bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.45)
             audio_tracks.append(bg_music_clip)
         except Exception as e:
             print(f"⚠️ Müzik işlenirken hata: {e}")
