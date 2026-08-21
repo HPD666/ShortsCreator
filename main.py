@@ -22,7 +22,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY anahtarı eksik!")
+        raise ValueError("GEMINI_API_KEY secret bilgisi eksik!")
 
     prompt = (
         "Generate a JSON response with two keys:\n"
@@ -33,7 +33,7 @@ def generate_fact_and_image_prompt():
     
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
-        model='gemini-2.5-flash',
+        model='gemini-3.6-flash',
         contents=prompt,
     )
     
