@@ -5,7 +5,6 @@ import random
 import textwrap
 import urllib.parse
 import requests
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from gtts import gTTS
@@ -16,7 +15,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
+from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudioClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -33,14 +32,13 @@ def generate_fact_and_image_prompt():
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    candidate_models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash']
     response = None
 
     for model_name in candidate_models:
         for attempt in range(1, 4):
             try:
-                print(f"[Gemini Request] Model: {model_name} (Deneme {attempt}/3)...")
+                print(f"[Gemini] Model: {model_name} (Deneme {attempt}/3)...")
                 response = client.models.generate_content(
                     model=model_name,
                     contents=prompt,
@@ -48,7 +46,7 @@ def generate_fact_and_image_prompt():
                 if response and response.text:
                     break
             except Exception as e:
-                print(f"⚠️ {model_name} ile bağlantı hatası ({e}). 5 saniye bekleniyor...")
+                print(f"⚠️ {model_name} hatası ({e}). 5sn bekleniyor...")
                 time.sleep(5)
         
         if response and response.text:
@@ -67,20 +65,17 @@ def generate_fact_and_image_prompt():
     fact = data.get("fact", "").strip()
     img_prompt = data.get("image_prompt", "").strip()
 
-    if not fact or not img_prompt:
-        raise ValueError("Gemini geçersiz JSON üretti!")
-
-    print(f"[Today's Fact]: {fact}")
-    print(f"[Image Prompt]: {img_prompt}")
+    print(f"[Fact]: {fact}")
+    print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ İNDİRİP TAM 1080x1920 DİKEY ORANINA SIKIŞTIRMADAN OTURTMA (CROP/FIT)
+# 2. GÖRSELİ İNDİRİP 1080x1920 TAM EKRANA OTURTMA
 def download_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k, highly detailed")
+    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k")
     seed = random.randint(10000, 99999)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
     
-    print("AI görseli indiriliyor...")
+    print("AI Görseli indiriliyor...")
     resp = requests.get(url, timeout=40)
     if resp.status_code == 200:
         raw_bg_path = "raw_background.jpg"
@@ -89,10 +84,8 @@ def download_ai_image(image_prompt):
         with open(raw_bg_path, "wb") as f:
             f.write(resp.content)
             
-        # Görseli açıp tam 1080x1920 dikey çözünürlüğe hizalayarak kırpma/boyutlandırma
         with Image.open(raw_bg_path) as img:
             img = img.convert('RGB')
-            # ImageOps.fit ile resmi esnetmeden tam 9:16 merkez ortalı doldurur
             fitted_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS)
             fitted_img.save(fixed_bg_path, quality=95)
             
@@ -100,22 +93,36 @@ def download_ai_image(image_prompt):
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. YAZIYI Shorts SAĞLIKLI BÖLGESİNE (ÜST-ORTA) VE TAM OKUNUR HİZALAMA
+# 3. TELİFSİZ VE ATIF GEREKTİRMEYEN (PUBLIC DOMAIN CC0) ARKA PLAN MÜZİĞİ İNDİRME
+def download_background_music():
+    music_path = "bg_music.mp3"
+    # FreePD - Public Domain (No Credit Required) Upbeat Track
+    music_url = "https://freepd.com/music/Tech%20Live.mp3"
+    
+    if not os.path.exists(music_path):
+        print("Telif hakkı olmayan (CC0) arka plan müziği indiriliyor...")
+        resp = requests.get(music_url, timeout=30)
+        if resp.status_code == 200:
+            with open(music_path, "wb") as f:
+                f.write(resp.content)
+        else:
+            print("Müzik indirilemedi, müziksiz devam edilecek.")
+            return None
+    return music_path
+
+# 4. YAZIYI SHORTS GÜVENLİ BÖLGESİNE YERLEŞTİRME
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # Uygun font seçimi ve font boyutu kalibrasyonu
     font_size = 52
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
     except Exception:
         font = ImageFont.load_default()
 
-    # Metni satırlara bölme (Genişlik sınırı)
     wrapped_lines = textwrap.wrap(text, width=20)
     
-    # Satır yüksekliklerini hesaplama
     line_heights = []
     line_widths = []
     for line in wrapped_lines:
@@ -127,32 +134,30 @@ def overlay_text_on_image(text, width=1080, height=1920):
     line_spacing = 16
     total_text_height = sum(line_heights) + (len(wrapped_lines) - 1) * line_spacing
     
-    # Shorts Arayüz Güvenli Bölgesi: Ekranın üstünden %22 aşağıda başlatıyoruz
+    # Ekranın üst-orta bölgesine (%22) konumlandırma
     y_start = int(height * 0.22)
     
-    # Metin Arka Planı Kutusu
     padding = 30
     box_left = (width - max_line_width) // 2 - padding
     box_top = y_start - padding
     box_right = (width + max_line_width) // 2 + padding
     box_bottom = y_start + total_text_height + padding
     
-    # Siyah yarı-saydam yuvarlatılmış arka plan kutusu
+    # Siyah yarı saydam kutu
     draw.rounded_rectangle(
         [box_left, box_top, box_right, box_bottom],
         radius=25,
-        fill=(0, 0, 0, 205)
+        fill=(0, 0, 0, 210)
     )
     
-    # Metni Satır Satır Yazma
     current_y = y_start
-    for i, line in enumerate(wrapped_lines):
+    for line in wrapped_lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         
-        # Metne gölge vererek belirginleştirme
+        # Siyah gölge + Beyaz Yazı
         draw.text((x + 2, current_y + 2), line, font=font, fill=(0, 0, 0, 255))
         draw.text((x, current_y), line, font=font, fill=(255, 255, 255, 255))
         current_y += text_h + line_spacing
@@ -161,7 +166,7 @@ def overlay_text_on_image(text, width=1080, height=1920):
     img.save(overlay_path)
     return overlay_path
 
-# 4. YOUTUBE OAUTH CLIENT
+# 5. YOUTUBE OAUTH CLIENT
 def get_youtube_client():
     token_raw = os.getenv("TOKEN_JSON")
     if not token_raw:
@@ -185,7 +190,7 @@ def get_youtube_client():
         
     return build("youtube", "v3", credentials=creds)
 
-# 5. YOUTUBE YÜKLEME, BEĞENİ VE DÜZELTİLMİŞ İNGİLİZCE YORUM
+# 6. YOUTUBE YÜKLEME, BEĞENİ VE OTOMATİK İNGİLİZCE YORUM
 def upload_to_youtube(video_path, fact_text):
     youtube = get_youtube_client()
     
@@ -208,7 +213,7 @@ def upload_to_youtube(video_path, fact_text):
     video_id = res.get('id')
     print(f"✅ Video başarıyla yüklendi! Video ID: {video_id}")
     
-    # 1. Otomatik Beğeni Atma
+    # 1. Beğeni Atma
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
         print("👍 Otomatik beğeni atıldı.")
@@ -222,39 +227,49 @@ def upload_to_youtube(video_path, fact_text):
                 'videoId': video_id,
                 'topLevelComment': {
                     'snippet': {
-                        'textOriginal': "Did you know this before? Share your thoughts below! 👇"
+                        'textOriginal': "Did you know this fact before? Share your thoughts below! 👇"
                     }
                 }
             }
         }
-        comment_response = youtube.commentThreads().insert(
+        comment_res = youtube.commentThreads().insert(
             part='snippet',
             body=comment_body
         ).execute()
-        print(f"💬 Otomatik İngilizce yorum başarıyla eklendi! Comment ID: {comment_response.get('id')}")
+        print(f"💬 İngilizce yorum eklendi! Comment ID: {comment_res.get('id')}")
     except Exception as e:
-        print(f"⚠️ Yorum atılamadı (Kanal ayarlarınızda yorumlar kapalı olabilir veya izin kısıtlaması var): {e}")
+        print(f"⚠️ Yorum eklenirken hata: {e}")
 
-# 6. VİDEO BİRLEŞTİRME VE SESLENDİRME
+# 7. VİDEO BİRLEŞTİRME VE SES/MÜZİK MİKSAJI
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
+    bg_music_path = download_background_music()
     
-    # Seslendirme üretimi (gTTS)
+    # Seslendirme (TTS)
     tts = gTTS(text=fact_text, lang='en', slow=False)
-    audio_path = "voice.mp3"
-    tts.save(audio_path)
+    voice_path = "voice.mp3"
+    tts.save(voice_path)
     
-    audio_clip = AudioFileClip(audio_path)
-    duration = audio_clip.duration + 0.5  # Video bitiminde yarım saniye esneklik
+    voice_clip = AudioFileClip(voice_path)
+    duration = voice_clip.duration + 0.5
+    
+    # Arka Plan Müziği Miksajı (Ses seviyesi %18'e kısılır)
+    audio_tracks = [voice_clip]
+    if bg_music_path and os.path.exists(bg_music_path):
+        bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.18)
+        audio_tracks.append(bg_music_clip)
+        
+    final_audio = CompositeAudioClip(audio_tracks)
     
     overlay_path = overlay_text_on_image(fact_text)
     
     bg_clip = ImageClip(bg_path).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
-    final_video = CompositeVideoClip([bg_clip, txt_clip]).with_audio(audio_clip)
+    final_video = CompositeVideoClip([bg_clip, txt_clip]).with_audio(final_audio)
     output_video_path = "final_shorts.mp4"
+    
     final_video.write_videofile(
         output_video_path,
         fps=24,
