@@ -17,7 +17,7 @@ from google.oauth2.credentials import Credentials
 # --- YOUTUBE YÜKLEME KAPSAMI ---
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
 
-# --- GİTHUB SECRETS DOSYA DÖNÜŞTÜRÜCÜ ---
+# --- GITHUB SECRETS DOSYA DÖNÜŞTÜRÜCÜ ---
 if os.getenv("YOUTUBE_CLIENT_SECRET") and not os.path.exists("client_secret.json"):
     with open("client_secret.json", "w") as f:
         f.write(os.getenv("YOUTUBE_CLIENT_SECRET"))
@@ -63,7 +63,7 @@ def get_trending_topic():
         print(f"AI Konu Üretim Hatası: {e}")
         return "The Sun"
 
-# --- 2. DİNAMİK BRITANNICA FACT ---
+# --- 2. DİNAMİK BRITANNICA FUN FACT ---
 def generate_britannica_fact(topic):
     model = genai.GenerativeModel('gemini-3.6-flash')
     prompt = (
@@ -151,20 +151,18 @@ def process_media(image_path, topic):
     
     fact_text = generate_britannica_fact(topic)
     
-    # Dış ses üretimi
     tts = gTTS(text=fact_text, lang='en', slow=False)
     tts.save(audio_file)
     voice_clip = AudioFileClip(audio_file)
     duration = voice_clip.duration
 
-    # Telifsiz arka plan müziği ekleme (assets/music klasöründen rastgele seçer)
     audio_tracks = [voice_clip]
     music_files = glob.glob("assets/music/*.mp3")
     
     if music_files:
         selected_music = random.choice(music_files)
         print(f"Fon müziği eklendi: {selected_music}")
-        bg_music = AudioFileClip(selected_music).subclip(0, duration).volumex(0.15) # Müzik sesini %15 seviyesine çeker
+        bg_music = AudioFileClip(selected_music).subclip(0, duration).volumex(0.15)
         audio_tracks.append(bg_music)
     else:
         print("Uyarı: 'assets/music' klasöründe mp3 bulunamadı, sadece dış ses kullanılacak.")
@@ -198,16 +196,34 @@ def get_youtube_client():
 
     return build('youtube', 'v3', credentials=creds)
 
-# --- 6. SADECE VİDEO YÜKLEME (GÜVENLİ VE SÜREKLİ) ---
+# --- 6. SADECE VİDEO YÜKLEME (POPÜLER FUN FACTS HASHTAG'LERİ İLE) ---
 def upload_video(video_file, topic, fact_text):
     print("[4/5] YouTube Shorts'a yükleniyor...")
     youtube = get_youtube_client()
     
+    title_hashtags = "#Shorts #FunFacts #Facts #DidYouKnow #MindBlowing"
+    clean_topic_tag = topic.replace(' ', '')
+    
     body = {
         'snippet': {
-            'title': f"{topic} - Did You Know? 🤯 #Shorts #Facts #Viral",
-            'description': f"Mind-blowing encyclopedic fact about {topic}: {fact_text}",
-            'tags': [topic, 'Facts', 'Shorts', 'Viral', 'Trivia'],
+            'title': f"{topic} Fact You Didn't Know! 🤯 {title_hashtags}",
+            'description': (
+                f"Mind-blowing fun fact about {topic}: {fact_text}\n\n"
+                f"#Shorts #FunFacts #Facts #DidYouKnow #MindBlowing #RandomFacts "
+                f"#LearnOnYouTube #InterestingFacts #Trivia #{clean_topic_tag}"
+            ),
+            'tags': [
+                topic, 
+                'Fun Facts', 
+                'Facts', 
+                'Did You Know', 
+                'Mind Blowing Facts', 
+                'Shorts', 
+                'Viral Facts', 
+                'Random Facts', 
+                'Trivia', 
+                'Daily Facts'
+            ],
             'categoryId': '27'
         },
         'status': {
