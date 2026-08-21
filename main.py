@@ -19,7 +19,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudio
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (GÜNCEL MODEL)
+# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (GÜNCEL GEMINI 3.6 & 3.5 MODELLERİ)
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY eksik!")
@@ -33,8 +33,8 @@ def generate_fact_and_image_prompt():
     
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # En güncel ve aktif Gemini modelleri
-    candidate_models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
+    # En yeni aktif modeller
+    candidate_models = ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
     response = None
 
     for model_name in candidate_models:
@@ -95,13 +95,13 @@ def download_ai_image(image_prompt):
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. TELİFSİZ VE ATIF GEREKTİRMEYEN (PUBLIC DOMAIN CC0) ARKA PLAN MÜZİĞİ İNDİRME
+# 3. TELİFSİZ VE ATIF GEREKTİRMEYEN ARKA PLAN MÜZİĞİ İNDİRME
 def download_background_music():
     music_path = "bg_music.mp3"
     music_url = "https://freepd.com/music/Tech%20Live.mp3"
     
     if not os.path.exists(music_path):
-        print("Telif hakkı olmayan (CC0) arka plan müziği indiriliyor...")
+        print("Telif hakkı olmayan arka plan müziği indiriliyor...")
         resp = requests.get(music_url, timeout=30)
         if resp.status_code == 200:
             with open(music_path, "wb") as f:
