@@ -1,9 +1,9 @@
-google-generativeai
+gtts
+google-genai
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
 moviepy
-gTTS
 pillow
 requests
 numpy
