@@ -1,4 +1,6 @@
 import os
+import glob
+import random
 import time
 import xml.etree.ElementTree as ET
 import requests
@@ -6,15 +8,14 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import google.generativeai as genai
 from gtts import gTTS
-from moviepy.editor import AudioFileClip, VideoClip
+from moviepy.editor import AudioFileClip, VideoClip, CompositeAudioClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from googleapiclient.errors import HttpError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-# --- YOUTUBE TAM YETKİ KAPSAMI (LIKE VE COMMENT İÇİN ŞART) ---
-SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
+# --- YOUTUBE YÜKLEME KAPSAMI ---
+SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
 
 # --- GİTHUB SECRETS DOSYA DÖNÜŞTÜRÜCÜ ---
 if os.getenv("YOUTUBE_CLIENT_SECRET") and not os.path.exists("client_secret.json"):
@@ -29,7 +30,7 @@ if os.getenv("TOKEN_JSON") and not os.path.exists("token.json"):
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 1. FULL AI TREND VE KONU TESPİTİ (SABİT LİSTE YOK) ---
+# --- 1. FULL AI TREND VE KONU TESPİTİ ---
 def get_trending_topic():
     print("[1/5] Canlı ilginç konu/trend sorgulanıyor...")
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -62,10 +63,9 @@ def get_trending_topic():
         print(f"AI Konu Üretim Hatası: {e}")
         return "The Sun"
 
-# --- 2. DİNAMİK BRITANNICA FACT (SADECE SEÇİLEN KONU HAKKINDA) ---
+# --- 2. DİNAMİK BRITANNICA FACT ---
 def generate_britannica_fact(topic):
     model = genai.GenerativeModel('gemini-3.6-flash')
-    
     prompt = (
         f"You are a Britannica encyclopedia expert. Generate 1 mind-blowing, 100% true, "
         f"concrete fun fact EXCLUSIVELY about '{topic}'. "
@@ -73,7 +73,6 @@ def generate_britannica_fact(topic):
         f"CRITICAL: Do NOT mention any other landmark or unrelated entity. "
         f"Keep it to 15-20 words max for YouTube Shorts narration."
     )
-    
     try:
         response = model.generate_content(prompt)
         text = response.text.strip().replace('"', '')
@@ -82,15 +81,6 @@ def generate_britannica_fact(topic):
     except Exception as e:
         print(f"Gemini Fact Hatası: {e}")
         return f"The {topic} features some of the most extraordinary measurements in nature."
-
-def generate_dynamic_comment(topic, fact_text):
-    model = genai.GenerativeModel('gemini-3.6-flash')
-    prompt = f"Write a 1-sentence engaging question for YouTube viewers specifically about this fact on '{topic}': '{fact_text}'."
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip().replace('"', '')
-    except Exception as e:
-        return f"Did you know this fascinating detail about {topic}?"
 
 # --- 3. AI GÖRSEL ÜRETİMİ ---
 def generate_100pct_ai_video(prompt_text):
@@ -106,12 +96,9 @@ def generate_100pct_ai_video(prompt_text):
         return path
     raise Exception("Görsel üretilemedi.")
 
-# --- ALTYAZI VE ORANTILI DİNAMİK ZOOM (YAMUK RESİM DÜZELTME) ---
+# --- ALTYAZI VE DİNAMİK ZOOM ---
 def add_subtitles_and_motion(image_path, text, duration):
     raw_img = Image.open(image_path).convert("RGB")
-    
-    # YAMUKLUĞU VE SÜNDÜRMEYİ ÖNLEYEN KRİTİK KISIM:
-    # ImageOps.fit görselin oranını bozmadan dikey 9:16 (1080x1920) alanına ortalayarak kırpar.
     base_img = ImageOps.fit(raw_img, (1080, 1920), method=Image.Resampling.LANCZOS)
     
     draw = ImageDraw.Draw(base_img)
@@ -156,22 +143,36 @@ def add_subtitles_and_motion(image_path, text, duration):
 
     return VideoClip(make_frame, duration=duration)
 
-# --- 4. MONTAJ VE AI SESLENDİRME ---
+# --- 4. MONTAJ, AI SESLENDİRME VE TELİFSİZ MÜZİK ---
 def process_media(image_path, topic):
-    print("[3/5] Dikey video, AI seslendirmesi ve altyazı montajlanıyor...")
+    print("[3/5] Dikey video, AI seslendirmesi, telifsiz müzik ve altyazı montajlanıyor...")
     audio_file = "voice.mp3"
     output_filename = "final_shorts.mp4"
     
     fact_text = generate_britannica_fact(topic)
     
+    # Dış ses üretimi
     tts = gTTS(text=fact_text, lang='en', slow=False)
     tts.save(audio_file)
+    voice_clip = AudioFileClip(audio_file)
+    duration = voice_clip.duration
+
+    # Telifsiz arka plan müziği ekleme (assets/music klasöründen rastgele seçer)
+    audio_tracks = [voice_clip]
+    music_files = glob.glob("assets/music/*.mp3")
     
-    audio_clip = AudioFileClip(audio_file)
-    duration = audio_clip.duration
+    if music_files:
+        selected_music = random.choice(music_files)
+        print(f"Fon müziği eklendi: {selected_music}")
+        bg_music = AudioFileClip(selected_music).subclip(0, duration).volumex(0.15) # Müzik sesini %15 seviyesine çeker
+        audio_tracks.append(bg_music)
+    else:
+        print("Uyarı: 'assets/music' klasöründe mp3 bulunamadı, sadece dış ses kullanılacak.")
+
+    final_audio = CompositeAudioClip(audio_tracks)
     
     video_clip = add_subtitles_and_motion(image_path, fact_text, duration)
-    final_clip = video_clip.set_audio(audio_clip)
+    final_clip = video_clip.set_audio(final_audio)
         
     final_clip.write_videofile(
         output_filename, 
@@ -181,10 +182,10 @@ def process_media(image_path, topic):
     )
     
     video_clip.close()
-    audio_clip.close()
+    voice_clip.close()
     return output_filename, fact_text
 
-# --- 5. YOUTUBE AUTHENTICATION (FORCE-SSL YETKİSİ İLE) ---
+# --- 5. YOUTUBE AUTHENTICATION ---
 def get_youtube_client():
     creds = None
     if os.path.exists('token.json'):
@@ -197,8 +198,8 @@ def get_youtube_client():
 
     return build('youtube', 'v3', credentials=creds)
 
-# --- 6. TAM YETKİLİ OTOMATİK YÜKLEME, BEĞENİ VE YORUM ---
-def upload_and_interact(video_file, topic, fact_text):
+# --- 6. SADECE VİDEO YÜKLEME (GÜVENLİ VE SÜREKLİ) ---
+def upload_video(video_file, topic, fact_text):
     print("[4/5] YouTube Shorts'a yükleniyor...")
     youtube = get_youtube_client()
     
@@ -218,52 +219,7 @@ def upload_and_interact(video_file, topic, fact_text):
     media = MediaFileUpload(video_file, chunksize=-1, resumable=True)
     response = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media).execute()
     video_id = response['id']
-    print(f"✅ BAŞARILI: Video Yüklendi! Video ID: {video_id}")
-    
-    # YouTube Sunucularının Videoyu Tam Indekslemesi İçin Bekleme Süresi
-    print("[5/5] Beğeni ve Yorum Hazırlığı (YouTube indekslemesi için 20 saniye bekleniyor)...")
-    time.sleep(20)
-    
-    # RETRY + DETAYLI LOGLU OTOMATİK BEĞENİ
-    for attempt in range(1, 4):
-        try:
-            print(f"Beğeni denemesi #{attempt}...")
-            youtube.videos().rate(id=video_id, rating='like').execute()
-            print("✅ Otomatik LIKE başarıyla atıldı!")
-            break
-        except HttpError as e:
-            print(f"⚠️ Beğeni API Hatası (Deneme {attempt}): Status={e.resp.status}, Content={e.content}")
-            time.sleep(5)
-        except Exception as e:
-            print(f"⚠️ Beğeni Hatası: {e}")
-            break
-
-    # RETRY + DETAYLI LOGLU OTOMATİK YORUM
-    comment_text = generate_dynamic_comment(topic, fact_text)
-    for attempt in range(1, 4):
-        try:
-            print(f"Yorum denemesi #{attempt}...")
-            youtube.commentThreads().insert(
-                part="snippet",
-                body={
-                    "snippet": {
-                        "videoId": video_id,
-                        "topLevelComment": {
-                            "snippet": {
-                                "textOriginal": comment_text
-                            }
-                        }
-                    }
-                }
-            ).execute()
-            print(f"✅ Otomatik YORUM başarıyla atıldı: '{comment_text}'")
-            break
-        except HttpError as e:
-            print(f"⚠️ Yorum API Hatası (Deneme {attempt}): Status={e.resp.status}, Content={e.content}")
-            time.sleep(5)
-        except Exception as e:
-            print(f"⚠️ Yorum Hatası: {e}")
-            break
+    print(f"✅ İŞLEM BAŞARIYLA TAMAMLANDI! Video Yüklendi! Video ID: {video_id}")
 
 # --- AKIŞ BAŞLATICI ---
 if __name__ == "__main__":
@@ -273,6 +229,6 @@ if __name__ == "__main__":
     generated_media = generate_100pct_ai_video(prompt)
     if generated_media and os.path.exists(generated_media):
         final_file, fact_text = process_media(generated_media, trend)
-        upload_and_interact(final_file, trend, fact_text)
+        upload_video(final_file, trend, fact_text)
     else:
         raise Exception("Görsel üretilemedi.")
