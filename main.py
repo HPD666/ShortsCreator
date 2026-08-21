@@ -6,9 +6,8 @@ import textwrap
 import urllib.parse
 import requests
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from gtts import gTTS
 from google import genai
 
 from google.oauth2.credentials import Credentials
@@ -16,27 +15,29 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudioClip
+from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. HER SEFERİNDE BENZERSİZ VE SONSUZ FARKLI BİLGİ ÜRETİMİ
+# 1. BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (BASİT İNGİLİZCE & BENZERSİZ BİLGİ)
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY eksik!")
 
-    # Rastgele konular ekleyerek Gemini'nin tekrara düşmesini engelliyoruz
-    categories = ["space astronomy", "deep sea biology", "bizarre history", "quantum physics", "human body mystery", "ancient civilizations", "nature marvels"]
+    categories = [
+        "space and planets", "ocean life", "human body", 
+        "animals", "nature", "history", "technology"
+    ]
     chosen_category = random.choice(categories)
     random_seed = random.randint(100000, 999999)
 
     prompt = (
         f"Generate a unique JSON response with two keys.\n"
         f"Randomization Seed: {random_seed}\n"
-        f"Category Focus: {chosen_category}\n"
-        "1. 'fact': TODAY'S FACT! A mind-blowing, extremely unique scientific or historical fact in English (under 20 words). Do not repeat common facts like octopus hearts or honey spoil.\n"
-        "2. 'image_prompt': A highly detailed, realistic, vertical visual description in English to generate an AI image matching this exact fact.\n"
-        "Return ONLY raw JSON in this format: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
+        f"Category: {chosen_category}\n"
+        "1. 'fact': TODAY'S FACT! A mind-blowing short fact in VERY SIMPLE, EASY English grammar (under 15 words). Use simple words that anyone can understand instantly.\n"
+        "2. 'image_prompt': A highly detailed, visual description in English to generate a vertical background image for this fact.\n"
+        "Return ONLY raw JSON: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -77,9 +78,9 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ YAMULTMADAN AKILLI MERKEZİ KIRPMA İLE 1080x1920 YAPMA
+# 2. GÖRSELİ YAMULTMADAN ORANTILI SIZDIRMA (1080x1920 KUSURSUZ FIT)
 def download_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"9:16 portrait vertical aspect ratio, {image_prompt}, cinematic, masterpiece, highly detailed")
+    encoded_prompt = urllib.parse.quote(f"vertical 9:16 portrait ratio, {image_prompt}, cinematic, vibrant colors, 8k")
     seed = random.randint(100000, 999999)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
     
@@ -89,31 +90,17 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        target_w, target_h = 1080, 1920
-        img_w, img_h = img.size
-        
-        # En-boy oranını hiç bozmadan büyütüp fazla kısımları merkezden kesme
-        ratio = max(target_w / img_w, target_h / img_h)
-        new_w = int(img_w * ratio)
-        new_h = int(img_h * ratio)
-        
-        resized_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        
-        left = (new_w - target_w) // 2
-        top = (new_h - target_h) // 2
-        right = left + target_w
-        bottom = top + target_h
-        
-        cropped_img = resized_img.crop((left, top, right, bottom))
-        cropped_img.save(fixed_bg_path, quality=95)
+        # En-boy oranını hiç bozmadan 1080x1920 kadrajına kusursuz oturtma
+        fitted_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        fitted_img.save(fixed_bg_path, quality=95)
         return fixed_bg_path
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. HAREKETLİ, YÜKSEK TEMPOLU TELİFSİZ ARKA PLAN MÜZİĞİ (CC0 PUBLIC DOMAIN)
+# 3. HAREKETLİ VE TELİFSİZ (CC0 PUBLIC DOMAIN) ARKA PLAN MÜZİĞİ
 def download_background_music():
     music_path = "bg_music.mp3"
-    # FreePD - Upbeat Energetic Electronic Track (Tamamen telifsiz / Atıf gerektirmez)
+    # %100 Telifsiz ve atıf (credit) gerektirmeyen enerjik müzik
     music_url = "https://freepd.com/music/Neon%20Groove.mp3"
     
     try:
@@ -124,21 +111,21 @@ def download_background_music():
                 f.write(resp.content)
             return music_path
     except Exception as e:
-        print(f"⚠️ Müzik indirilemedi ({e}), müziksiz devam edilecek.")
+        print(f"⚠️ Müzik indirilemedi ({e}).")
     return None
 
-# 4. YAZIYI GÜVENLİ BÖLGEYE YERLEŞTİRME VE SİYAH KUTU EKLEME
+# 4. METİN ORTALAMA VE SİYAH KUTU EKLEME
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    font_size = 50
+    font_size = 52
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
     except Exception:
         font = ImageFont.load_default()
 
-    wrapped_lines = textwrap.wrap(text, width=22)
+    wrapped_lines = textwrap.wrap(text, width=20)
     
     line_heights = []
     line_widths = []
@@ -148,21 +135,23 @@ def overlay_text_on_image(text, width=1080, height=1920):
         line_heights.append(bbox[3] - bbox[1])
     
     max_line_width = max(line_widths) if line_widths else 0
-    line_spacing = 14
+    line_spacing = 16
     total_text_height = sum(line_heights) + (len(wrapped_lines) - 1) * line_spacing
     
-    y_start = int(height * 0.25)
+    # Ekranın %28'lik üst-orta bölgesine konumlandırma
+    y_start = int(height * 0.28)
     
-    padding = 28
+    padding = 30
     box_left = (width - max_line_width) // 2 - padding
     box_top = y_start - padding
     box_right = (width + max_line_width) // 2 + padding
     box_bottom = y_start + total_text_height + padding
     
+    # Yarı saydam yuvarlatılmış siyah kutu
     draw.rounded_rectangle(
         [box_left, box_top, box_right, box_bottom],
-        radius=20,
-        fill=(0, 0, 0, 215)
+        radius=22,
+        fill=(0, 0, 0, 210)
     )
     
     current_y = y_start
@@ -172,6 +161,7 @@ def overlay_text_on_image(text, width=1080, height=1920):
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         
+        # Gölge + Beyaz Yazı
         draw.text((x + 2, current_y + 2), line, font=font, fill=(0, 0, 0, 255))
         draw.text((x, current_y), line, font=font, fill=(255, 255, 255, 255))
         current_y += text_h + line_spacing
@@ -227,14 +217,14 @@ def upload_to_youtube(video_path, fact_text):
     video_id = res.get('id')
     print(f"✅ Video yüklendi! Video ID: {video_id}")
     
-    # 1. Beğeni
+    # 1. Otomatik Beğeni
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
         print("👍 Otomatik beğeni atıldı.")
     except Exception as e:
         print(f"⚠️ Beğeni atılamadı: {e}")
         
-    # 2. Otomatik İngilizce Yorum
+    # 2. Otomatik Yorum
     try:
         comment_body = {
             'snippet': {
@@ -254,37 +244,26 @@ def upload_to_youtube(video_path, fact_text):
     except Exception as e:
         print(f"⚠️ Yorum eklenirken hata oluştu: {e}")
 
-# 7. VİDEO OLUŞTURMA VE SES/MÜZİK MİKSAJI
+# 7. SADECE MÜZİKLİ VİDEO BİRLEŞTİRME (SESLENDİRME YOK)
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
     bg_music_path = download_background_music()
     
-    # Seslendirme
-    tts = gTTS(text=fact_text, lang='en', slow=False)
-    voice_path = "voice.mp3"
-    tts.save(voice_path)
+    # Video süresi 10 saniyeye sabitlendi
+    duration = 10.0
     
-    voice_clip = AudioFileClip(voice_path)
-    duration = voice_clip.duration + 0.6
-    
-    audio_tracks = [voice_clip]
     if bg_music_path and os.path.exists(bg_music_path):
-        try:
-            # Müzik ses seviyesi %45 yapıldı (Daha yüksek ve duyulur ritim)
-            bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.45)
-            audio_tracks.append(bg_music_clip)
-        except Exception as e:
-            print(f"⚠️ Müzik işlenirken hata: {e}")
-        
-    final_audio = CompositeAudioClip(audio_tracks)
+        bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.8)
+    else:
+        raise RuntimeError("Müzik dosyası yüklenemedi!")
     
     overlay_path = overlay_text_on_image(fact_text)
     
     bg_clip = ImageClip(bg_path).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
-    final_video = CompositeVideoClip([bg_clip, txt_clip]).with_audio(final_audio)
+    final_video = CompositeVideoClip([bg_clip, txt_clip]).with_audio(bg_music_clip)
     output_video_path = "final_shorts.mp4"
     
     final_video.write_videofile(
