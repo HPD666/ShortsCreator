@@ -19,7 +19,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. BİLGİ VE GÖRSEL PROMPT ÜRETİMİ
+# 1. BASİT İNGİLİZCE VE ÖZGÜN BİLGİ ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY bulunamadı!")
@@ -78,12 +78,10 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. SÜNDÜRME/YAMULTMA OLMADAN DOĞAL ORANLI AI GÖRSELİ (1080x1920 CROP)
+# 2. ORAN BOZULMASIZ GÖRSEL VE SİNEMATİK KARANLIK VIGNETTE KATMANI
 def download_ai_image(image_prompt):
     encoded_prompt = urllib.parse.quote(f"{image_prompt}, 8k resolution, cinematic lighting, masterpiece, detailed photorealism")
     seed = random.randint(100000, 999999)
-    
-    # Yapay zekadan 1024x1024 doğal kare formatta istenerek sündürme engellenir
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={seed}&enhance=true"
     
     print("AI Görseli indiriliyor...")
@@ -92,9 +90,21 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        # Pixelleri uzatıp yamultmadan 1080x1920 boyutuna akıllıca oturtur
+        # Tam merkeze oturtup 1080x1920 oranında kesme
         cropped_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-        cropped_img.save(fixed_bg_path, quality=95)
+        
+        # Üst ve alt kenarlara sinematik karartma (Vignette Gölgelendirme)
+        vignette = Image.new('RGBA', (1080, 1920), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(vignette)
+        
+        # Üstten ve alttan yumuşak siyah geçiş
+        for y in range(300):
+            alpha = int(180 * (1 - (y / 300)))
+            draw.line([(0, y), (1080, y)], fill=(0, 0, 0, alpha))
+            draw.line([(0, 1920 - y), (1080, 1920 - y)], fill=(0, 0, 0, alpha))
+
+        final_img = Image.alpha_composite(cropped_img.convert('RGBA'), vignette)
+        final_img.convert('RGB').save(fixed_bg_path, quality=95)
         return fixed_bg_path
     else:
         raise Exception("Görsel indirme başarısız oldu!")
@@ -223,7 +233,7 @@ def upload_to_youtube(video_path, fact_text):
     video_id = res.get('id')
     print(f"✅ Video başarıyla yüklendi! Video ID: {video_id}")
 
-# 7. VİDEO BİRLEŞTİRME
+# 7. VİDEO BİRLEŞTİRME VE ZOOM-IN EFEKTİ
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
@@ -234,10 +244,15 @@ def build_shorts_video():
     
     overlay_path = overlay_text_on_image(fact_text)
     
+    # 10 saniye boyunca akıcı ve sinematik Zoom-In efekti (1.0x -> 1.08x)
     bg_clip = ImageClip(bg_path).with_duration(duration)
+    zoomed_bg = bg_clip.resized(lambda t: 1 + 0.08 * (t / duration))
+    
+    # Zoom sonrası taşmaları engellemek için 1080x1920 kadrajına sabitleme
+    final_bg_clip = CompositeVideoClip([zoomed_bg.with_position('center')], size=(1080, 1920)).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
-    final_video = CompositeVideoClip([bg_clip, txt_clip]).with_audio(bg_music_clip)
+    final_video = CompositeVideoClip([final_bg_clip, txt_clip]).with_audio(bg_music_clip)
     output_video_path = "final_shorts.mp4"
     
     final_video.write_videofile(
