@@ -19,7 +19,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudio
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
+# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (GÜNCEL MODEL)
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY eksik!")
@@ -32,13 +32,15 @@ def generate_fact_and_image_prompt():
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash']
+    
+    # En güncel ve aktif Gemini modelleri
+    candidate_models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
     response = None
 
     for model_name in candidate_models:
         for attempt in range(1, 4):
             try:
-                print(f"[Gemini] Model: {model_name} (Deneme {attempt}/3)...")
+                print(f"[Gemini] Model deneniyor: {model_name} (Deneme {attempt}/3)...")
                 response = client.models.generate_content(
                     model=model_name,
                     contents=prompt,
@@ -96,7 +98,6 @@ def download_ai_image(image_prompt):
 # 3. TELİFSİZ VE ATIF GEREKTİRMEYEN (PUBLIC DOMAIN CC0) ARKA PLAN MÜZİĞİ İNDİRME
 def download_background_music():
     music_path = "bg_music.mp3"
-    # FreePD - Public Domain (No Credit Required) Upbeat Track
     music_url = "https://freepd.com/music/Tech%20Live.mp3"
     
     if not os.path.exists(music_path):
@@ -134,7 +135,6 @@ def overlay_text_on_image(text, width=1080, height=1920):
     line_spacing = 16
     total_text_height = sum(line_heights) + (len(wrapped_lines) - 1) * line_spacing
     
-    # Ekranın üst-orta bölgesine (%22) konumlandırma
     y_start = int(height * 0.22)
     
     padding = 30
@@ -143,7 +143,6 @@ def overlay_text_on_image(text, width=1080, height=1920):
     box_right = (width + max_line_width) // 2 + padding
     box_bottom = y_start + total_text_height + padding
     
-    # Siyah yarı saydam kutu
     draw.rounded_rectangle(
         [box_left, box_top, box_right, box_bottom],
         radius=25,
@@ -157,7 +156,6 @@ def overlay_text_on_image(text, width=1080, height=1920):
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         
-        # Siyah gölge + Beyaz Yazı
         draw.text((x + 2, current_y + 2), line, font=font, fill=(0, 0, 0, 255))
         draw.text((x, current_y), line, font=font, fill=(255, 255, 255, 255))
         current_y += text_h + line_spacing
@@ -213,14 +211,12 @@ def upload_to_youtube(video_path, fact_text):
     video_id = res.get('id')
     print(f"✅ Video başarıyla yüklendi! Video ID: {video_id}")
     
-    # 1. Beğeni Atma
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
         print("👍 Otomatik beğeni atıldı.")
     except Exception as e:
         print(f"⚠️ Beğeni atılamadı: {e}")
         
-    # 2. Otomatik İngilizce Yorum Atma
     try:
         comment_body = {
             'snippet': {
@@ -246,7 +242,6 @@ def build_shorts_video():
     bg_path = download_ai_image(image_prompt)
     bg_music_path = download_background_music()
     
-    # Seslendirme (TTS)
     tts = gTTS(text=fact_text, lang='en', slow=False)
     voice_path = "voice.mp3"
     tts.save(voice_path)
@@ -254,7 +249,6 @@ def build_shorts_video():
     voice_clip = AudioFileClip(voice_path)
     duration = voice_clip.duration + 0.5
     
-    # Arka Plan Müziği Miksajı (Ses seviyesi %18'e kısılır)
     audio_tracks = [voice_clip]
     if bg_music_path and os.path.exists(bg_music_path):
         bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.18)
