@@ -8,7 +8,7 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from gTTS import gTTS
+from gtts import gTTS
 from google import genai
 
 from google.oauth2.credentials import Credentials
