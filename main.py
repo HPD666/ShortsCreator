@@ -1,29 +1,3 @@
-import sys
-import subprocess
-
-# OTOMATİK PAKET YÜKLEYİCİ (Eksik paketleri script çalışırken kendisi yükler)
-REQUIRED_PACKAGES = [
-    "gTTS",
-    "google-generativeai",
-    "google-api-python-client",
-    "google-auth-oauthlib",
-    "google-auth-httplib2",
-    "moviepy",
-    "pillow",
-    "requests",
-    "numpy"
-]
-
-def install_missing_packages():
-    for pkg in REQUIRED_PACKAGES:
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
-        except Exception as e:
-            print(f"Package install warning ({pkg}): {e}")
-
-install_missing_packages()
-
-# PAKET KURULUMLARINDAN SONRAKİ İTHALATLAR
 import os
 import json
 import random
@@ -83,7 +57,6 @@ def generate_fact_and_image_prompt():
             print(f"Gemini attempt ({model_name}) error: {e}")
             continue
 
-    # Yedek Dinamik Çözüm (Live Wikipedia API)
     print("Falling back to live Wikipedia API...")
     wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", timeout=10)
     data = wiki_res.json()
@@ -93,7 +66,7 @@ def generate_fact_and_image_prompt():
     img_prompt = f"cinematic 8k vertical photorealistic illustration of {title}, highly detailed"
     return fact, img_prompt
 
-# 2. PROMPT İLE BİREBİR UYUMLU YAPAY ZEKA GÖRSELİ ÜRETME (Pollinations AI)
+# 2. PROMPT İLE BİREBİR UYUMLU YAPAY ZEKA GÖRSELİ ÜRETME
 def download_matching_ai_image(image_prompt):
     encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k resolution, highly detailed")
     seed = random.randint(10000, 99999)
@@ -109,7 +82,7 @@ def download_matching_ai_image(image_prompt):
     else:
         raise Exception("AI Image Generation failed!")
 
-# 3. YAZI EKLENTİSİ (Pillow - ImageMagick Hatası Vermez)
+# 3. YAZI EKLENTİSİ (Pillow)
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -217,22 +190,16 @@ def upload_to_youtube(video_path, fact_text):
 
 # 6. ANA İŞLEM DÖNGÜSÜ
 def build_shorts_video():
-    # 1. Bilgi ve O Bilgiye Özel Görsel Promptunu Al
     fact_text, image_prompt = generate_fact_and_image_prompt()
-    
-    # 2. Prompt ile Birebir Uyumlu AI Resmini Üret ve İndir
     bg_path = download_matching_ai_image(image_prompt)
     
-    # 3. İngilizce Seslendirme
     tts = gTTS(text=fact_text, lang='en')
     audio_path = "voice.mp3"
     tts.save(audio_path)
     audio_clip = AudioFileClip(audio_path)
     
-    # 4. Altyazı Kaplamasını Oluştur
     overlay_path = overlay_text_on_image(fact_text)
     
-    # 5. Video Oluşturma (MoviePy)
     bg_clip = ImageClip(bg_path).set_duration(audio_clip.duration)
     txt_clip = ImageClip(overlay_path).set_duration(audio_clip.duration)
     
