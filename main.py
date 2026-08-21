@@ -7,9 +7,10 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+# Modül adı küçük (gtts), sınıf adı büyük (gTTS)
 from gtts import gTTS
 
-# YENİ GOOGLE GENAI SDK (google.generativeai YERİNE)
+# YENİ GOOGLE GENAI SDK
 from google import genai
 
 from google.oauth2.credentials import Credentials
@@ -17,12 +18,12 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# YENİ MOVIEPY v2.0+ IMPORTLARI (moviepy.editor YERİNE)
+# YENİ MOVIEPY v2.0+ IMPORTLARI
 from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (Yeni google.genai SDK)
+# 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
 def generate_fact_and_image_prompt():
     prompt = (
         "Generate a JSON response with two keys:\n"
@@ -35,7 +36,7 @@ def generate_fact_and_image_prompt():
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=prompt,
             )
             if response and response.text:
@@ -55,14 +56,25 @@ def generate_fact_and_image_prompt():
         except Exception as e:
             print(f"Gemini API error: {e}")
 
-    print("Falling back to live Wikipedia API...")
-    wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", timeout=10)
-    data = wiki_res.json()
-    title = data.get('title', 'Science')
-    extract = data.get('extract', 'Space is vast.')
-    fact = extract.split('. ')[0] + '.'
-    img_prompt = f"cinematic 8k vertical photorealistic illustration of {title}, highly detailed"
-    return fact, img_prompt
+    print("Falling back to Wikipedia API...")
+    try:
+        headers = {'User-Agent': 'YouTubeShortsCreator/1.0 (contact@example.com)'}
+        wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers=headers, timeout=10)
+        if wiki_res.status_code == 200 and wiki_res.text:
+            data = wiki_res.json()
+            title = data.get('title', 'Science')
+            extract = data.get('extract', 'Space is vast.')
+            fact = extract.split('. ')[0] + '.'
+            img_prompt = f"cinematic 8k vertical photorealistic illustration of {title}, highly detailed"
+            return fact, img_prompt
+    except Exception as e:
+        print(f"Wikipedia API error: {e}")
+
+    # Statik son çare yedeklemesi
+    return (
+        "Honey never spoils; archaeologists found edible 3,000-year-old honey in Egyptian tombs.",
+        "cinematic 8k vertical photorealistic illustration of ancient Egyptian golden honey jars inside a tomb, highly detailed"
+    )
 
 # 2. PROMPT İLE BİREBİR UYUMLU YAPAY ZEKA GÖRSELİ ÜRETME
 def download_matching_ai_image(image_prompt):
@@ -200,7 +212,7 @@ def build_shorts_video():
     
     overlay_path = overlay_text_on_image(fact_text)
     
-    # MoviePy v2.0+ uyumlu kurgu yöntemi
+    # MoviePy v2.0+ uyumlu yöntem
     bg_clip = ImageClip(bg_path).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
