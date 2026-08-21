@@ -6,7 +6,7 @@ import urllib.parse
 import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from gTTS import gTTS
+from gtts import gTTS
 import google.generativeai as genai
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
