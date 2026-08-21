@@ -7,10 +7,7 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Modül adı küçük (gtts), sınıf adı büyük (gTTS)
-from gtts import gTTS
-
-# YENİ GOOGLE GENAI SDK
+from gTTS import gTTS
 from google import genai
 
 from google.oauth2.credentials import Credentials
@@ -18,13 +15,15 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# YENİ MOVIEPY v2.0+ IMPORTLARI
 from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
 def generate_fact_and_image_prompt():
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY anahtarı eksik!")
+
     prompt = (
         "Generate a JSON response with two keys:\n"
         "1. 'fact': A mind-blowing, short scientific or historical fact in English (under 20 words). Direct and engaging.\n"
@@ -32,49 +31,31 @@ def generate_fact_and_image_prompt():
         "Return ONLY raw JSON in this format: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
     
-    if GEMINI_API_KEY:
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            response = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=prompt,
-            )
-            if response and response.text:
-                clean_text = response.text.strip()
-                if "```json" in clean_text:
-                    clean_text = clean_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_text:
-                    clean_text = clean_text.split("```")[1].split("```")[0].strip()
-                
-                data = json.loads(clean_text)
-                fact = data.get("fact", "").strip()
-                img_prompt = data.get("image_prompt", "").strip()
-                if fact and img_prompt:
-                    print(f"[AI Fact]: {fact}")
-                    print(f"[AI Image Prompt]: {img_prompt}")
-                    return fact, img_prompt
-        except Exception as e:
-            print(f"Gemini API error: {e}")
-
-    print("Falling back to Wikipedia API...")
-    try:
-        headers = {'User-Agent': 'YouTubeShortsCreator/1.0 (contact@example.com)'}
-        wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers=headers, timeout=10)
-        if wiki_res.status_code == 200 and wiki_res.text:
-            data = wiki_res.json()
-            title = data.get('title', 'Science')
-            extract = data.get('extract', 'Space is vast.')
-            fact = extract.split('. ')[0] + '.'
-            img_prompt = f"cinematic 8k vertical photorealistic illustration of {title}, highly detailed"
-            return fact, img_prompt
-    except Exception as e:
-        print(f"Wikipedia API error: {e}")
-
-    # Statik son çare yedeklemesi
-    return (
-        "Honey never spoils; archaeologists found edible 3,000-year-old honey in Egyptian tombs.",
-        "cinematic 8k vertical photorealistic illustration of ancient Egyptian golden honey jars inside a tomb, highly detailed"
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
     )
+    
+    if not response or not response.text:
+        raise RuntimeError("Gemini API boş yanıt döndürdü!")
+
+    clean_text = response.text.strip()
+    if "```json" in clean_text:
+        clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+    elif "```" in clean_text:
+        clean_text = clean_text.split("```")[1].split("```")[0].strip()
+    
+    data = json.loads(clean_text)
+    fact = data.get("fact", "").strip()
+    img_prompt = data.get("image_prompt", "").strip()
+
+    if not fact or not img_prompt:
+        raise ValueError("Gemini beklenen JSON formatında veri üretmedi!")
+
+    print(f"[AI Fact]: {fact}")
+    print(f"[AI Image Prompt]: {img_prompt}")
+    return fact, img_prompt
 
 # 2. PROMPT İLE BİREBİR UYUMLU YAPAY ZEKA GÖRSELİ ÜRETME
 def download_matching_ai_image(image_prompt):
@@ -90,7 +71,7 @@ def download_matching_ai_image(image_prompt):
             f.write(resp.content)
         return bg_path
     else:
-        raise Exception("AI Image Generation failed!")
+        raise Exception("Görsel üretimi başarısız oldu!")
 
 # 3. YAZI EKLENTİSİ (Pillow)
 def overlay_text_on_image(text, width=1080, height=1920):
@@ -135,11 +116,11 @@ def overlay_text_on_image(text, width=1080, height=1920):
 def get_youtube_client():
     token_raw = os.getenv("TOKEN_JSON")
     if not token_raw:
-        raise ValueError("TOKEN_JSON secret environment variable is missing!")
+        raise ValueError("TOKEN_JSON secret bilgisi eksik!")
     
     info = json.loads(token_raw)
     creds = Credentials(
-        token=None,
+        token=info.get("token"),
         refresh_token=info["refresh_token"],
         token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
         client_id=info["client_id"],
@@ -149,8 +130,15 @@ def get_youtube_client():
             "https://www.googleapis.com/auth/youtube.force-ssl"
         ]
     )
-    if not creds.valid:
+    
+    try:
         creds.refresh(Request())
+    except Exception as e:
+        raise RuntimeError(
+            f"YouTube kimlik doğrulaması başarısız! TOKEN_JSON içinde bulunan refresh_token geçersiz veya süresi dolmuş. "
+            f"Lütfen yeni bir token alıp GitHub Secrets alanını güncelleyin. Hata: {e}"
+        )
+        
     return build("youtube", "v3", credentials=creds)
 
 # 5. YOUTUBE YÜKLEME VE ETKİLEŞİM
@@ -174,13 +162,13 @@ def upload_to_youtube(video_path, fact_text):
     req = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
     res = req.execute()
     video_id = res.get('id')
-    print(f"Video successfully uploaded! ID: {video_id}")
+    print(f"Video başarıyla yüklendi! ID: {video_id}")
     
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
-        print("Auto-liked successfully.")
+        print("Otomatik beğeni eklendi.")
     except Exception as e:
-        print(f"Auto-like failed: {e}")
+        print(f"Otomatik beğeni eklenemedi: {e}")
         
     try:
         comment_body = {
@@ -194,9 +182,9 @@ def upload_to_youtube(video_path, fact_text):
             }
         }
         youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-        print("Auto-comment posted successfully.")
+        print("Otomatik yorum eklendi.")
     except Exception as e:
-        print(f"Auto-comment failed: {e}")
+        print(f"Otomatik yorum eklenemedi: {e}")
 
 # 6. ANA İŞLEM DÖNGÜSÜ
 def build_shorts_video():
@@ -212,7 +200,6 @@ def build_shorts_video():
     
     overlay_path = overlay_text_on_image(fact_text)
     
-    # MoviePy v2.0+ uyumlu yöntem
     bg_clip = ImageClip(bg_path).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
