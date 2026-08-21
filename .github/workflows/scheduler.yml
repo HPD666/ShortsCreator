@@ -1,32 +1,35 @@
-name: Dynamic Auto Shorts Creator
+name: YouTube Shorts Creator
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 6  * * *' # Her gün saat 12:00 UTC'de otomatik çalışır
-  workflow_dispatch: # GitHub arayüzünden manuel tetikleme butonu
+    - cron: '0 */6 * * *'
 
 jobs:
-  build-and-upload:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Repositoriyi Çek
-        uses: actions/checkout@v4
+      - name: Repoyu Klonla
+        uses: actions/checkout@v3
 
-      - name: Python Kurulumu
-        uses: actions/setup-python@v5
+      - name: Python Kur
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      - name: Sistem Kütüphanelerini Kur (FFmpeg ve ImageMagick)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+          sudo sed -i 's/domain="coder" rights="none" pattern="PDF"/domain="coder" rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
 
       - name: Bağımlılıkları Yükle
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Oto Video Üretimi ve Yükleme
+      - name: Shorts Oluştur ve Yükle
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-        run: |
-          python main.py
+        run: python main.py
