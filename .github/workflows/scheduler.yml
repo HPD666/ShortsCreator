@@ -32,3 +32,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
         run: python main.py
+
+      - name: Keep Alive
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          date > keep_alive.txt
+          git add keep_alive.txt
+          git commit -m "Keep alive: $(date)" || exit 0
+          git push
