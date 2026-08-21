@@ -19,15 +19,15 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
+# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (YEDEK SİZ)
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY secret bilgisi eksik!")
+        raise ValueError("GEMINI_API_KEY eksik!")
 
     prompt = (
         "Generate a JSON response with two keys:\n"
-        "1. 'fact': A mind-blowing, short scientific or historical fact in English (under 20 words). Direct and engaging.\n"
-        "2. 'image_prompt': A highly detailed, realistic, vertical visual description in English to generate an AI image matching this exact fact (e.g. 'cinematic vertical shot of...').\n"
+        "1. 'fact': TODAY'S FACT! A mind-blowing, short scientific or historical fact in English (under 20 words). Direct and engaging.\n"
+        "2. 'image_prompt': A highly detailed, realistic, vertical visual description in English to generate an AI image matching this exact fact.\n"
         "Return ONLY raw JSON in this format: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
     
@@ -51,19 +51,19 @@ def generate_fact_and_image_prompt():
     img_prompt = data.get("image_prompt", "").strip()
 
     if not fact or not img_prompt:
-        raise ValueError("Gemini beklenen JSON formatında veri üretmedi!")
+        raise ValueError("Gemini geçersiz JSON üretti!")
 
-    print(f"[AI Fact]: {fact}")
-    print(f"[AI Image Prompt]: {img_prompt}")
+    print(f"[Today's Fact]: {fact}")
+    print(f"[Image Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. PROMPT İLE BİREBİR UYUMLU YAPAY ZEKA GÖRSELİ ÜRETME
-def download_matching_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k resolution, highly detailed")
+# 2. GÖRSEL ÜRETİMİ
+def download_ai_image(image_prompt):
+    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k, highly detailed")
     seed = random.randint(10000, 99999)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
     
-    print(f"Generating AI Image matching prompt: '{image_prompt}'...")
+    print("AI görseli indiriliyor...")
     resp = requests.get(url, timeout=40)
     if resp.status_code == 200:
         bg_path = "background.jpg"
@@ -71,9 +71,9 @@ def download_matching_ai_image(image_prompt):
             f.write(resp.content)
         return bg_path
     else:
-        raise Exception("Görsel üretimi başarısız oldu!")
+        raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. YAZI EKLENTİSİ (Pillow)
+# 3. YAZI MASKESİ OLUŞTURMA (Pillow)
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -112,11 +112,11 @@ def overlay_text_on_image(text, width=1080, height=1920):
     img.save(overlay_path)
     return overlay_path
 
-# 4. YOUTUBE OAUTH CLIENT
+# 4. YOUTUBE OAUTH İŞLEMLERİ
 def get_youtube_client():
     token_raw = os.getenv("TOKEN_JSON")
     if not token_raw:
-        raise ValueError("TOKEN_JSON secret bilgisi eksik!")
+        raise ValueError("TOKEN_JSON eksik!")
     
     info = json.loads(token_raw)
     creds = Credentials(
@@ -131,25 +131,20 @@ def get_youtube_client():
         ]
     )
     
-    try:
+    if creds.expired or not creds.valid:
         creds.refresh(Request())
-    except Exception as e:
-        raise RuntimeError(
-            f"YouTube kimlik doğrulaması başarısız! TOKEN_JSON içinde bulunan refresh_token geçersiz veya süresi dolmuş. "
-            f"Lütfen yeni bir token alıp GitHub Secrets alanını güncelleyin. Hata: {e}"
-        )
         
     return build("youtube", "v3", credentials=creds)
 
-# 5. YOUTUBE YÜKLEME VE ETKİLEŞİM
+# 5. YOUTUBE YÜKLEME, BEĞENİ VE YORUM
 def upload_to_youtube(video_path, fact_text):
     youtube = get_youtube_client()
     
     body = {
         'snippet': {
-            'title': "Mind-Blowing Fact You Didn't Know! #Shorts #Facts",
-            'description': f"{fact_text}\n\n#shorts #facts #didyouknow #science #education",
-            'tags': ['shorts', 'facts', 'didyouknow', 'science'],
+            'title': "TODAY'S FACT! Mind-Blowing Fact You Didn't Know #Shorts",
+            'description': f"{fact_text}\n\n#shorts #todaysfact #facts #didyouknow #science",
+            'tags': ['shorts', 'todaysfact', 'facts', 'didyouknow'],
             'categoryId': '27'
         },
         'status': {
@@ -162,13 +157,13 @@ def upload_to_youtube(video_path, fact_text):
     req = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
     res = req.execute()
     video_id = res.get('id')
-    print(f"Video başarıyla yüklendi! ID: {video_id}")
+    print(f"Video yüklendi! ID: {video_id}")
     
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
-        print("Otomatik beğeni eklendi.")
+        print("Otomatik beğeni atıldı.")
     except Exception as e:
-        print(f"Otomatik beğeni eklenemedi: {e}")
+        print(f"Beğeni atılamadı: {e}")
         
     try:
         comment_body = {
@@ -176,20 +171,20 @@ def upload_to_youtube(video_path, fact_text):
                 'videoId': video_id,
                 'topLevelComment': {
                     'snippet': {
-                        'textOriginal': "What do you think about this? Share your thoughts in the comments! 👇"
+                        'textOriginal': "Did you know this before? Let me know in the comments! 👇"
                     }
                 }
             }
         }
         youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-        print("Otomatik yorum eklendi.")
+        print("Otomatik yorum atıldı.")
     except Exception as e:
-        print(f"Otomatik yorum eklenemedi: {e}")
+        print(f"Yorum atılamadı: {e}")
 
-# 6. ANA İŞLEM DÖNGÜSÜ
+# 6. MÜZİK/SES VE VİDEO KURGUSU
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
-    bg_path = download_matching_ai_image(image_prompt)
+    bg_path = download_ai_image(image_prompt)
     
     tts = gTTS(text=fact_text, lang='en')
     audio_path = "voice.mp3"
