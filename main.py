@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import random
 import textwrap
 import urllib.parse
@@ -7,7 +8,7 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from gtts import gTTS
+from gTTS import gTTS
 from google import genai
 
 from google.oauth2.credentials import Credentials
@@ -19,7 +20,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (YEDEK SİZ)
+# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (503 / RETRY DESTEKLİ)
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY eksik!")
@@ -32,13 +33,30 @@ def generate_fact_and_image_prompt():
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model='gemini-3.6-flash',
-        contents=prompt,
-    )
     
+    # 503 Sunucu Yoğunluğu ve Zaman Aşımı için Alternatif Modeller ve Yeniden Deneme
+    candidate_models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+    response = None
+
+    for model_name in candidate_models:
+        for attempt in range(1, 4):
+            try:
+                print(f"[Gemini Request] Model: {model_name} (Deneme {attempt}/3)...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                if response and response.text:
+                    break
+            except Exception as e:
+                print(f"⚠️ {model_name} ile bağlantı hatası ({e}). 5 saniye bekleniyor...")
+                time.sleep(5)
+        
+        if response and response.text:
+            break
+
     if not response or not response.text:
-        raise RuntimeError("Gemini API boş yanıt döndürdü!")
+        raise RuntimeError("Gemini API sunucu yoğunluğu nedeniyle tüm denemelere rağmen yanıt veremedi!")
 
     clean_text = response.text.strip()
     if "```json" in clean_text:
