@@ -19,7 +19,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. BASİT İNGİLİZCE & TEKRARSIZ BİLGİ ÜRETİMİ
+# 1. BİLGİ VE GÖRSEL PROMPT ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY bulunamadı!")
@@ -36,7 +36,7 @@ def generate_fact_and_image_prompt():
         f"Unique Seed: {timestamp_seed}\n"
         f"Topic: {chosen_topic}\n"
         "1. 'fact': TODAY'S FACT! A 100% scientifically accurate, surprising short fact in VERY SIMPLE, basic English (under 15 words). Do not use cliché facts.\n"
-        "2. 'image_prompt': A high quality visual prompt in English to generate a 9:16 vertical background picture representing this exact fact.\n"
+        "2. 'image_prompt': A high quality visual prompt in English to generate a background picture representing this exact fact.\n"
         "Return ONLY raw JSON: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
     
@@ -78,11 +78,13 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ %100 YAMULMADAN MERKEZDEN KESME (ImageOps.fit)
+# 2. SÜNDÜRME/YAMULTMA OLMADAN DOĞAL ORANLI AI GÖRSELİ (1080x1920 CROP)
 def download_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"vertical 9:16 portrait ratio, {image_prompt}, 8k resolution, cinematic lighting, masterpiece")
+    encoded_prompt = urllib.parse.quote(f"{image_prompt}, 8k resolution, cinematic lighting, masterpiece, detailed photorealism")
     seed = random.randint(100000, 999999)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
+    
+    # Yapay zekadan 1024x1024 doğal kare formatta istenerek sündürme engellenir
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={seed}&enhance=true"
     
     print("AI Görseli indiriliyor...")
     resp = requests.get(url, timeout=40)
@@ -90,21 +92,20 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        # ImageOps.fit: Görüntü oranını hiç bozmadan 1080x1920 tuvaline ortalayarak keser
+        # Pixelleri uzatıp yamultmadan 1080x1920 boyutuna akıllıca oturtur
         cropped_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         cropped_img.save(fixed_bg_path, quality=95)
         return fixed_bg_path
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. YÜKSEK ERİŞİLEBİLİRLİKLİ CC0 MÜZİK İNDİRİCİ (CREDIT GEREKTİRMEZ)
+# 3. YÜKSEK ERİŞİLEBİLİRLİKLİ CC0 MÜZİK İNDİRİCİ
 def download_background_music():
     music_path = "bg_music.mp3"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
-    # GitHub Actions ip engellerine takılmayan doğrudan CC0 telifsiz müzik bağlantıları
     music_urls = [
         "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3",
         "https://ia801503.us.archive.org/15/items/cc0-music-sample-pack/upbeat_funk.mp3",
@@ -178,7 +179,7 @@ def overlay_text_on_image(text, width=1080, height=1920):
     img.save(overlay_path)
     return overlay_path
 
-# 5. YOUTUBE BAĞLANTISI
+# 5. YOUTUBE AUTHENTICATION
 def get_youtube_client():
     token_raw = os.getenv("TOKEN_JSON")
     if not token_raw:
