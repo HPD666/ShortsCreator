@@ -5,7 +5,8 @@ import random
 import textwrap
 import urllib.parse
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 
 from gtts import gTTS
 from google import genai
@@ -19,7 +20,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudio
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (GÜNCEL GEMINI 3.6 & 3.5 MODELLERİ)
+# 1. GEMINI İLE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY eksik!")
@@ -32,8 +33,6 @@ def generate_fact_and_image_prompt():
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # En yeni aktif modeller
     candidate_models = ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
     response = None
 
@@ -71,58 +70,67 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ İNDİRİP 1080x1920 TAM EKRANA OTURTMA
+# 2. GÖRSELİ GÖREV ORANINI BOZMADAN MERKEZİ KIRPARAK 1080x1920 YAPMA (ORANTI BOZULMAZ)
 def download_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k")
+    encoded_prompt = urllib.parse.quote(f"9:16 vertical orientation, {image_prompt}, cinematic, masterpiece, highly detailed")
     seed = random.randint(10000, 99999)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
     
     print("AI Görseli indiriliyor...")
     resp = requests.get(url, timeout=40)
     if resp.status_code == 200:
-        raw_bg_path = "raw_background.jpg"
         fixed_bg_path = "background.jpg"
+        img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        with open(raw_bg_path, "wb") as f:
-            f.write(resp.content)
-            
-        with Image.open(raw_bg_path) as img:
-            img = img.convert('RGB')
-            fitted_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS)
-            fitted_img.save(fixed_bg_path, quality=95)
-            
+        # En-boy oranını esnetmeden 1080x1920 boyutuna tam merkez kırpma (Crop)
+        target_w, target_h = 1080, 1920
+        img_w, img_h = img.size
+        
+        scale = max(target_w / img_w, target_h / img_h)
+        new_w, new_h = int(img_w * scale), int(img_h * scale)
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        
+        left = (new_w - target_w) // 2
+        top = (new_h - target_h) // 2
+        right = left + target_w
+        bottom = top + target_h
+        
+        cropped_img = img.crop((left, top, right, bottom))
+        cropped_img.save(fixed_bg_path, quality=95)
         return fixed_bg_path
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. TELİFSİZ VE ATIF GEREKTİRMEYEN ARKA PLAN MÜZİĞİ İNDİRME
+# 3. TELİFSİZ VE KREDİ GEREKTİRMEYEN HAREKETLİ ARKA PLAN MÜZİĞİ İNDİRME
 def download_background_music():
     music_path = "bg_music.mp3"
-    music_url = "https://freepd.com/music/Tech%20Live.mp3"
+    # %100 CC0 Public Domain güvenilir arka plan müzik adresi
+    music_url = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3"
+    headers = {'User-Agent': 'Mozilla/5.0'}
     
-    if not os.path.exists(music_path):
-        print("Telif hakkı olmayan arka plan müziği indiriliyor...")
-        resp = requests.get(music_url, timeout=30)
+    try:
+        print("Arka plan müziği indiriliyor...")
+        resp = requests.get(music_url, headers=headers, timeout=30)
         if resp.status_code == 200:
             with open(music_path, "wb") as f:
                 f.write(resp.content)
-        else:
-            print("Müzik indirilemedi, müziksiz devam edilecek.")
-            return None
-    return music_path
+            return music_path
+    except Exception as e:
+        print(f"⚠️ Müzik indirilemedi ({e}), müziksiz devam edilecek.")
+    return None
 
-# 4. YAZIYI SHORTS GÜVENLİ BÖLGESİNE YERLEŞTİRME
+# 4. YAZIYI GÜVENLİ BÖLGEYE YERLEŞTİRME VE SİYAH KUTU EKLEME
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    font_size = 52
+    font_size = 50
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
     except Exception:
         font = ImageFont.load_default()
 
-    wrapped_lines = textwrap.wrap(text, width=20)
+    wrapped_lines = textwrap.wrap(text, width=22)
     
     line_heights = []
     line_widths = []
@@ -132,21 +140,23 @@ def overlay_text_on_image(text, width=1080, height=1920):
         line_heights.append(bbox[3] - bbox[1])
     
     max_line_width = max(line_widths) if line_widths else 0
-    line_spacing = 16
+    line_spacing = 14
     total_text_height = sum(line_heights) + (len(wrapped_lines) - 1) * line_spacing
     
-    y_start = int(height * 0.22)
+    # Shorts arayüzünün üstüne düşmemesi için yüksekliğin %25'ine koyuyoruz
+    y_start = int(height * 0.25)
     
-    padding = 30
+    padding = 28
     box_left = (width - max_line_width) // 2 - padding
     box_top = y_start - padding
     box_right = (width + max_line_width) // 2 + padding
     box_bottom = y_start + total_text_height + padding
     
+    # Yarı saydam yuvarlatılmış siyah arka plan
     draw.rounded_rectangle(
         [box_left, box_top, box_right, box_bottom],
-        radius=25,
-        fill=(0, 0, 0, 210)
+        radius=20,
+        fill=(0, 0, 0, 215)
     )
     
     current_y = y_start
@@ -156,6 +166,7 @@ def overlay_text_on_image(text, width=1080, height=1920):
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         
+        # Gölge + Yazı
         draw.text((x + 2, current_y + 2), line, font=font, fill=(0, 0, 0, 255))
         draw.text((x, current_y), line, font=font, fill=(255, 255, 255, 255))
         current_y += text_h + line_spacing
@@ -188,7 +199,7 @@ def get_youtube_client():
         
     return build("youtube", "v3", credentials=creds)
 
-# 6. YOUTUBE YÜKLEME, BEĞENİ VE OTOMATİK İNGİLİZCE YORUM
+# 6. YOUTUBE YÜKLEME, BEĞENİ VE OTOMATİK YORUM
 def upload_to_youtube(video_path, fact_text):
     youtube = get_youtube_client()
     
@@ -206,17 +217,19 @@ def upload_to_youtube(video_path, fact_text):
     }
     
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-    req = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
+    req = youtube.videos().insert(part='snippet,status', body=body, media_body=media)
     res = req.execute()
     video_id = res.get('id')
-    print(f"✅ Video başarıyla yüklendi! Video ID: {video_id}")
+    print(f"✅ Video yüklendi! Video ID: {video_id}")
     
+    # 1. Beğeni
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
         print("👍 Otomatik beğeni atıldı.")
     except Exception as e:
         print(f"⚠️ Beğeni atılamadı: {e}")
         
+    # 2. Otomatik İngilizce Yorum
     try:
         comment_body = {
             'snippet': {
@@ -234,25 +247,29 @@ def upload_to_youtube(video_path, fact_text):
         ).execute()
         print(f"💬 İngilizce yorum eklendi! Comment ID: {comment_res.get('id')}")
     except Exception as e:
-        print(f"⚠️ Yorum eklenirken hata: {e}")
+        print(f"⚠️ Yorum eklenirken hata oluştu: {e}")
 
-# 7. VİDEO BİRLEŞTİRME VE SES/MÜZİK MİKSAJI
+# 7. VİDEO OLUŞTURMA VE SES/MÜZİK MİKSAJI
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
     bg_music_path = download_background_music()
     
+    # Seslendirme
     tts = gTTS(text=fact_text, lang='en', slow=False)
     voice_path = "voice.mp3"
     tts.save(voice_path)
     
     voice_clip = AudioFileClip(voice_path)
-    duration = voice_clip.duration + 0.5
+    duration = voice_clip.duration + 0.6
     
     audio_tracks = [voice_clip]
     if bg_music_path and os.path.exists(bg_music_path):
-        bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.18)
-        audio_tracks.append(bg_music_clip)
+        try:
+            bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.15)
+            audio_tracks.append(bg_music_clip)
+        except Exception as e:
+            print(f"⚠️ Müzik işlenirken hata: {e}")
         
     final_audio = CompositeAudioClip(audio_tracks)
     
