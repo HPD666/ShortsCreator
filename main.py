@@ -6,7 +6,7 @@ import textwrap
 import urllib.parse
 import requests
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from google import genai
 
@@ -19,7 +19,7 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. GÜNCEL GEMINI MODELLERİ İLE TEKRARSIZ BİLGİ ÜRETİMİ
+# 1. BASİT İNGİLİZCE & TEKRARSIZ BİLGİ ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY bulunamadı!")
@@ -41,7 +41,6 @@ def generate_fact_and_image_prompt():
     )
     
     client = genai.Client(api_key=GEMINI_API_KEY)
-    # Güncel çalışan modeller
     candidate_models = ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
     response = None
 
@@ -79,9 +78,9 @@ def generate_fact_and_image_prompt():
     print(f"[Prompt]: {img_prompt}")
     return fact, img_prompt
 
-# 2. GÖRSELİ YAMULTMADAN KESEN AKILLI CROP (1080x1920)
+# 2. GÖRSELİ %100 YAMULMADAN MERKEZDEN KESME (ImageOps.fit)
 def download_ai_image(image_prompt):
-    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, 8k resolution, cinematic lighting, masterpiece")
+    encoded_prompt = urllib.parse.quote(f"vertical 9:16 portrait ratio, {image_prompt}, 8k resolution, cinematic lighting, masterpiece")
     seed = random.randint(100000, 999999)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
     
@@ -91,50 +90,42 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        target_w, target_h = 1080, 1920
-        img_w, img_h = img.size
-        
-        scale = max(target_w / img_w, target_h / img_h)
-        new_w, new_h = int(img_w * scale), int(img_h * scale)
-        img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        
-        left = (new_w - target_w) // 2
-        top = (new_h - target_h) // 2
-        
-        cropped_img = img_resized.crop((left, top, left + target_w, top + target_h))
+        # ImageOps.fit: Görüntü oranını hiç bozmadan 1080x1920 tuvaline ortalayarak keser
+        cropped_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         cropped_img.save(fixed_bg_path, quality=95)
         return fixed_bg_path
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. YEDEKLİ MÜZİKLİ İNDİRME SİSTEMİ (CC0 PUBLIC DOMAIN)
+# 3. YÜKSEK ERİŞİLEBİLİRLİKLİ CC0 MÜZİK İNDİRİCİ (CREDIT GEREKTİRMEZ)
 def download_background_music():
     music_path = "bg_music.mp3"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
+    # GitHub Actions ip engellerine takılmayan doğrudan CC0 telifsiz müzik bağlantıları
     music_urls = [
-        "https://freepd.com/music/Neon%20Groove.mp3",
-        "https://freepd.com/music/Unstoppable.mp3",
-        "https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3"
+        "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3",
+        "https://ia801503.us.archive.org/15/items/cc0-music-sample-pack/upbeat_funk.mp3",
+        "https://freepd.com/music/Neon%20Groove.mp3"
     ]
     
     for index, url in enumerate(music_urls, 1):
         try:
             print(f"Arka plan müziği indiriliyor (Kaynak {index})...")
             resp = requests.get(url, headers=headers, timeout=20)
-            if resp.status_code == 200 and len(resp.content) > 50000:
+            if resp.status_code == 200 and len(resp.content) > 300000:
                 with open(music_path, "wb") as f:
                     f.write(resp.content)
                 print("✅ Müzik başarıyla indirildi.")
                 return music_path
         except Exception as e:
-            print(f"⚠️ Kaynak {index} hatası ({e}), sonraki deneniyor...")
+            print(f"⚠️ Kaynak {index} erişim hatası ({e}), sonraki deneniyor...")
             
     raise RuntimeError("Müzik kaynaklarının hiçbirine ulaşılamadı!")
 
-# 4. YARI SAYDAM SİYAH KUTULU YAZI KATMANI
+# 4. SİYAH KUTULU METİN KATMANI
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -187,7 +178,7 @@ def overlay_text_on_image(text, width=1080, height=1920):
     img.save(overlay_path)
     return overlay_path
 
-# 5. YOUTUBE AUTHENTICATION
+# 5. YOUTUBE BAĞLANTISI
 def get_youtube_client():
     token_raw = os.getenv("TOKEN_JSON")
     if not token_raw:
@@ -208,7 +199,7 @@ def get_youtube_client():
         
     return build("youtube", "v3", credentials=creds)
 
-# 6. SADECE GÜVENLİ YOUTUBE YÜKLEME
+# 6. GÜVENLİ YOUTUBE YÜKLEME
 def upload_to_youtube(video_path, fact_text):
     youtube = get_youtube_client()
     
@@ -231,7 +222,7 @@ def upload_to_youtube(video_path, fact_text):
     video_id = res.get('id')
     print(f"✅ Video başarıyla yüklendi! Video ID: {video_id}")
 
-# 7. VİDEO İŞLEME
+# 7. VİDEO BİRLEŞTİRME
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
