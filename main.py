@@ -1,6 +1,34 @@
+import sys
+import subprocess
+
+# OTOMATİK PAKET YÜKLEYİCİ (Eksik paketleri script çalışırken kendisi yükler)
+REQUIRED_PACKAGES = [
+    "gTTS",
+    "google-generativeai",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "moviepy",
+    "pillow",
+    "requests",
+    "numpy"
+]
+
+def install_missing_packages():
+    for pkg in REQUIRED_PACKAGES:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
+        except Exception as e:
+            print(f"Package install warning ({pkg}): {e}")
+
+install_missing_packages()
+
+# PAKET KURULUMLARINDAN SONRAKİ İTHALATLAR
 import os
 import json
+import random
 import textwrap
+import urllib.parse
 import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -12,16 +40,17 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip
 
-# 1. DİNAMİK YAPAY ZEKA / CANLI BİLGİ ÜRETİCİ (SIFIR MANUEL METİN)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-def get_dynamic_fact():
+# 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE BİREBİR GÖRSEL PROMPTU ÜRETİMİ
+def generate_fact_and_image_prompt():
     prompt = (
-        "Provide one mind-blowing, highly interesting, scientific or historical fact in English "
-        "for a YouTube Short. Keep it under 22 words, direct, easy to understand, and extremely engaging. "
-        "Do not include introductory words like 'Did you know'."
+        "Generate a JSON response with two keys:\n"
+        "1. 'fact': A mind-blowing, short scientific or historical fact in English (under 20 words). Direct and engaging.\n"
+        "2. 'image_prompt': A highly detailed, realistic, vertical visual description in English to generate an AI image matching this exact fact (e.g. 'cinematic vertical shot of...').\n"
+        "Return ONLY raw JSON in this format: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
     
     models_to_try = [
@@ -32,42 +61,61 @@ def get_dynamic_fact():
         'gemini-pro'
     ]
     
-    # 1. Aşama: Yapay Zeka (Gemini)
     for model_name in models_to_try:
         try:
             model = genai.GenerativeModel(model_name)
             res = model.generate_content(prompt)
-            if res and res.text and len(res.text.strip()) > 10:
-                fact = res.text.strip().replace('"', '').replace("Did you know that ", "").replace("Did you know ", "")
-                print(f"[AI Fact Generated via {model_name}]: {fact}")
-                return fact
+            if res and res.text:
+                clean_text = res.text.strip()
+                if "```json" in clean_text:
+                    clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_text:
+                    clean_text = clean_text.split("```")[1].split("```")[0].strip()
+                
+                data = json.loads(clean_text)
+                fact = data.get("fact", "").strip()
+                img_prompt = data.get("image_prompt", "").strip()
+                if fact and img_prompt:
+                    print(f"[AI Fact]: {fact}")
+                    print(f"[AI Image Prompt]: {img_prompt}")
+                    return fact, img_prompt
         except Exception as e:
-            print(f"Gemini model {model_name} attempt failed: {e}")
+            print(f"Gemini attempt ({model_name}) error: {e}")
             continue
 
-    # 2. Aşama: Canlı İngilizce Vikipedi API (Yapay zeka erişilemezse canlı ansiklopedi çeker)
-    print("Fetching dynamic fact live from Wikipedia API...")
-    try:
-        wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", timeout=10)
-        if wiki_res.status_code == 200:
-            data = wiki_res.json()
-            extract = data.get('extract', '')
-            first_sentence = extract.split('. ')[0] + '.'
-            if len(first_sentence) > 15:
-                print(f"[Wikipedia Fact Fetched]: {first_sentence}")
-                return first_sentence
-    except Exception as e:
-        print(f"Wikipedia API error: {e}")
+    # Yedek Dinamik Çözüm (Live Wikipedia API)
+    print("Falling back to live Wikipedia API...")
+    wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", timeout=10)
+    data = wiki_res.json()
+    title = data.get('title', 'Science')
+    extract = data.get('extract', 'Space is vast.')
+    fact = extract.split('. ')[0] + '.'
+    img_prompt = f"cinematic 8k vertical photorealistic illustration of {title}, highly detailed"
+    return fact, img_prompt
 
-    raise RuntimeError("Critical Error: Unable to fetch dynamic content from AI or Wikipedia APIs!")
+# 2. PROMPT İLE BİREBİR UYUMLU YAPAY ZEKA GÖRSELİ ÜRETME (Pollinations AI)
+def download_matching_ai_image(image_prompt):
+    encoded_prompt = urllib.parse.quote(f"vertical 9:16 aspect ratio, {image_prompt}, cinematic lighting, photorealistic, 8k resolution, highly detailed")
+    seed = random.randint(10000, 99999)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}&enhance=true"
+    
+    print(f"Generating AI Image matching prompt: '{image_prompt}'...")
+    resp = requests.get(url, timeout=40)
+    if resp.status_code == 200:
+        bg_path = "background.jpg"
+        with open(bg_path, "wb") as f:
+            f.write(resp.content)
+        return bg_path
+    else:
+        raise Exception("AI Image Generation failed!")
 
-# 2. PIL İLE ALTYAZI ÇİZİMİ (ImageMagick Bağımlılığı Olmadan %100 Kararlı)
+# 3. YAZI EKLENTİSİ (Pillow - ImageMagick Hatası Vermez)
 def overlay_text_on_image(text, width=1080, height=1920):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 52)
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
     except Exception:
         font = ImageFont.load_default()
 
@@ -78,7 +126,7 @@ def overlay_text_on_image(text, width=1080, height=1920):
         bbox = draw.textbbox((0, 0), line, font=font)
         line_heights.append(bbox[3] - bbox[1])
     
-    total_height = sum(line_heights) + (len(wrapped_lines) - 1) * 18
+    total_height = sum(line_heights) + (len(wrapped_lines) - 1) * 16
     y_start = (height - total_height) // 2
     
     current_y = y_start
@@ -88,22 +136,19 @@ def overlay_text_on_image(text, width=1080, height=1920):
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         
-        # Siyah yarı saydam arka plan kutusu
-        pad = 16
+        pad = 18
         draw.rectangle(
             [x - pad, current_y - pad, x + text_w + pad, current_y + text_h + pad],
             fill=(0, 0, 0, 190)
         )
-        
-        # Beyaz Metin
         draw.text((x, current_y), line, font=font, fill=(255, 255, 255, 255))
-        current_y += text_h + 18
+        current_y += text_h + 16
 
     overlay_path = "text_overlay.png"
     img.save(overlay_path)
     return overlay_path
 
-# 3. YOUTUBE OAUTH CLIENT
+# 4. YOUTUBE OAUTH CLIENT
 def get_youtube_client():
     token_raw = os.getenv("TOKEN_JSON")
     if not token_raw:
@@ -125,7 +170,7 @@ def get_youtube_client():
         creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
 
-# 4. YOUTUBE YÜKLEME VE İETİLEŞİM (İNGİLİZCE)
+# 5. YOUTUBE YÜKLEME VE ETKİLEŞİM
 def upload_to_youtube(video_path, fact_text):
     youtube = get_youtube_client()
     
@@ -146,53 +191,48 @@ def upload_to_youtube(video_path, fact_text):
     req = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
     res = req.execute()
     video_id = res.get('id')
-    print(f"Video successfully uploaded! Video ID: {video_id}")
+    print(f"Video successfully uploaded! ID: {video_id}")
     
-    # Otomatik Beğeni
     try:
         youtube.videos().rate(id=video_id, rating='like').execute()
-        print("Video automatically liked.")
+        print("Auto-liked successfully.")
     except Exception as e:
-        print(f"Could not like video: {e}")
+        print(f"Auto-like failed: {e}")
         
-    # Otomatik Yorum
     try:
         comment_body = {
             'snippet': {
                 'videoId': video_id,
                 'topLevelComment': {
                     'snippet': {
-                        'textOriginal': "What do you think about this? Share your thoughts below! 👇"
+                        'textOriginal': "What do you think about this? Share your thoughts in the comments! 👇"
                     }
                 }
             }
         }
         youtube.commentThreads().insert(part='snippet', body=comment_body).execute()
-        print("Automatic comment posted.")
+        print("Auto-comment posted successfully.")
     except Exception as e:
-        print(f"Could not post comment: {e}")
+        print(f"Auto-comment failed: {e}")
 
-# 5. VİDEO BİRLEŞTİRME VE ÜRETİM SÜRECİ
+# 6. ANA İŞLEM DÖNGÜSÜ
 def build_shorts_video():
-    # Dynamic Fact Generation
-    fact_text = get_dynamic_fact()
+    # 1. Bilgi ve O Bilgiye Özel Görsel Promptunu Al
+    fact_text, image_prompt = generate_fact_and_image_prompt()
     
-    # English Audio Generation (gTTS)
+    # 2. Prompt ile Birebir Uyumlu AI Resmini Üret ve İndir
+    bg_path = download_matching_ai_image(image_prompt)
+    
+    # 3. İngilizce Seslendirme
     tts = gTTS(text=fact_text, lang='en')
     audio_path = "voice.mp3"
     tts.save(audio_path)
     audio_clip = AudioFileClip(audio_path)
     
-    # Background Image Download (Vertical 1080x1920)
-    img_resp = requests.get("https://picsum.photos/1080/1920", timeout=15)
-    bg_path = "background.jpg"
-    with open(bg_path, "wb") as f:
-        f.write(img_resp.content)
-        
-    # Overlay Text Image
+    # 4. Altyazı Kaplamasını Oluştur
     overlay_path = overlay_text_on_image(fact_text)
     
-    # MoviePy Montaj
+    # 5. Video Oluşturma (MoviePy)
     bg_clip = ImageClip(bg_path).set_duration(audio_clip.duration)
     txt_clip = ImageClip(overlay_path).set_duration(audio_clip.duration)
     
