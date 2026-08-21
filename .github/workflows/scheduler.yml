@@ -9,26 +9,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Repoyu Klonla
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Python Kur
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Sistem Kütüphanelerini Kur (FFmpeg ve ImageMagick)
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick
-          sudo sed -i 's/domain="coder" rights="none" pattern="PDF"/domain="coder" rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
 
-      - name: Bağımlılıkları Yükle
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Shorts Oluştur ve Yükle
+      - name: Run Shorts Creator Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
