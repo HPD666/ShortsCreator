@@ -6,19 +6,23 @@ import urllib.parse
 import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
 from gtts import gTTS
-import google.generativeai as genai
+
+# YENİ GOOGLE GENAI SDK (google.generativeai YERİNE)
+from google import genai
+
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip
+
+# YENİ MOVIEPY v2.0+ IMPORTLARI (moviepy.editor YERİNE)
+from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
-# 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE BİREBİR GÖRSEL PROMPTU ÜRETİMİ
+# 1. YAPAY ZEKA: İNGİLİZCE BİLGİ VE GÖRSEL PROMPTU ÜRETİMİ (Yeni google.genai SDK)
 def generate_fact_and_image_prompt():
     prompt = (
         "Generate a JSON response with two keys:\n"
@@ -27,20 +31,15 @@ def generate_fact_and_image_prompt():
         "Return ONLY raw JSON in this format: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
     
-    models_to_try = [
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-pro',
-        'gemini-2.0-flash',
-        'gemini-pro'
-    ]
-    
-    for model_name in models_to_try:
+    if GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel(model_name)
-            res = model.generate_content(prompt)
-            if res and res.text:
-                clean_text = res.text.strip()
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+            )
+            if response and response.text:
+                clean_text = response.text.strip()
                 if "```json" in clean_text:
                     clean_text = clean_text.split("```json")[1].split("```")[0].strip()
                 elif "```" in clean_text:
@@ -54,8 +53,7 @@ def generate_fact_and_image_prompt():
                     print(f"[AI Image Prompt]: {img_prompt}")
                     return fact, img_prompt
         except Exception as e:
-            print(f"Gemini attempt ({model_name}) error: {e}")
-            continue
+            print(f"Gemini API error: {e}")
 
     print("Falling back to live Wikipedia API...")
     wiki_res = requests.get("https://en.wikipedia.org/api/rest_v1/page/random/summary", timeout=10)
@@ -196,14 +194,17 @@ def build_shorts_video():
     tts = gTTS(text=fact_text, lang='en')
     audio_path = "voice.mp3"
     tts.save(audio_path)
+    
     audio_clip = AudioFileClip(audio_path)
+    duration = audio_clip.duration
     
     overlay_path = overlay_text_on_image(fact_text)
     
-    bg_clip = ImageClip(bg_path).set_duration(audio_clip.duration)
-    txt_clip = ImageClip(overlay_path).set_duration(audio_clip.duration)
+    # MoviePy v2.0+ uyumlu kurgu yöntemi
+    bg_clip = ImageClip(bg_path).with_duration(duration)
+    txt_clip = ImageClip(overlay_path).with_duration(duration)
     
-    final_video = CompositeVideoClip([bg_clip, txt_clip]).set_audio(audio_clip)
+    final_video = CompositeVideoClip([bg_clip, txt_clip]).with_audio(audio_clip)
     output_video_path = "final_shorts.mp4"
     final_video.write_videofile(output_video_path, fps=24, codec='libx264', audio_codec='aac')
     
