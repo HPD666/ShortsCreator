@@ -2,6 +2,7 @@ import os
 import json
 import time
 import random
+import glob
 import textwrap
 import urllib.parse
 import requests
@@ -15,7 +16,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from moviepy import ImageClip, AudioFileClip, CompositeVideoClip
+from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudioClip
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -90,14 +91,11 @@ def download_ai_image(image_prompt):
         fixed_bg_path = "background.jpg"
         img = Image.open(BytesIO(resp.content)).convert('RGB')
         
-        # Tam merkeze oturtup 1080x1920 oranında kesme
         cropped_img = ImageOps.fit(img, (1080, 1920), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         
-        # Üst ve alt kenarlara sinematik karartma (Vignette Gölgelendirme)
         vignette = Image.new('RGBA', (1080, 1920), (0, 0, 0, 0))
         draw = ImageDraw.Draw(vignette)
         
-        # Üstten ve alttan yumuşak siyah geçiş
         for y in range(300):
             alpha = int(180 * (1 - (y / 300)))
             draw.line([(0, y), (1080, y)], fill=(0, 0, 0, alpha))
@@ -109,32 +107,25 @@ def download_ai_image(image_prompt):
     else:
         raise Exception("Görsel indirme başarısız oldu!")
 
-# 3. YÜKSEK ERİŞİLEBİLİRLİKLİ CC0 MÜZİK İNDİRİCİ
-def download_background_music():
-    music_path = "bg_music.mp3"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+# 3. YEREL KLASÖRDEN RASTGELE YOUTUBE KİTAPLIĞI MÜZİĞİ SEÇME
+def get_local_background_music():
+    """
+    Telif riski olmaması için YouTube Audio Library'den indirdiğiniz 
+    mp3 dosyalarını projenizin 'assets/music' klasörüne koyun.
+    """
+    music_folder = "assets/music"
+    if not os.path.exists(music_folder):
+        os.makedirs(music_folder, exist_ok=True)
+        
+    music_files = glob.glob(os.path.join(music_folder, "*.mp3"))
     
-    music_urls = [
-        "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3",
-        "https://ia801503.us.archive.org/15/items/cc0-music-sample-pack/upbeat_funk.mp3",
-        "https://freepd.com/music/Neon%20Groove.mp3"
-    ]
-    
-    for index, url in enumerate(music_urls, 1):
-        try:
-            print(f"Arka plan müziği indiriliyor (Kaynak {index})...")
-            resp = requests.get(url, headers=headers, timeout=20)
-            if resp.status_code == 200 and len(resp.content) > 300000:
-                with open(music_path, "wb") as f:
-                    f.write(resp.content)
-                print("✅ Müzik başarıyla indirildi.")
-                return music_path
-        except Exception as e:
-            print(f"⚠️ Kaynak {index} erişim hatası ({e}), sonraki deneniyor...")
-            
-    raise RuntimeError("Müzik kaynaklarının hiçbirine ulaşılamadı!")
+    if not music_files:
+        print("⚠️ UYARI: 'assets/music' klasöründe mp3 bulunamadı. Müziksiz devam ediliyor.")
+        return None
+        
+    selected_music = random.choice(music_files)
+    print(f"✅ Seçilen Güvenli Arka Plan Müziği: {selected_music}")
+    return selected_music
 
 # 4. SİYAH KUTULU METİN KATMANI
 def overlay_text_on_image(text, width=1080, height=1920):
@@ -216,7 +207,7 @@ def upload_to_youtube(video_path, fact_text):
     
     body = {
         'snippet': {
-            'title': "TODAY'S FACT! Mind-Blowing Fact You Didn't Know #Shorts",
+            'title': f"TODAY'S FACT! {fact_text[:40]}... #Shorts",
             'description': f"{fact_text}\n\n#shorts #todaysfact #facts #didyouknow #science",
             'tags': ['shorts', 'todaysfact', 'facts', 'didyouknow'],
             'categoryId': '27'
@@ -237,22 +228,24 @@ def upload_to_youtube(video_path, fact_text):
 def build_shorts_video():
     fact_text, image_prompt = generate_fact_and_image_prompt()
     bg_path = download_ai_image(image_prompt)
-    bg_music_path = download_background_music()
     
     duration = 10.0
-    bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.85)
-    
     overlay_path = overlay_text_on_image(fact_text)
     
-    # 10 saniye boyunca akıcı ve sinematik Zoom-In efekti (1.0x -> 1.08x)
     bg_clip = ImageClip(bg_path).with_duration(duration)
     zoomed_bg = bg_clip.resized(lambda t: 1 + 0.08 * (t / duration))
-    
-    # Zoom sonrası taşmaları engellemek için 1080x1920 kadrajına sabitleme
     final_bg_clip = CompositeVideoClip([zoomed_bg.with_position('center')], size=(1080, 1920)).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
-    final_video = CompositeVideoClip([final_bg_clip, txt_clip]).with_audio(bg_music_clip)
+    # Arka plan müziği yerel klasörden çekiliyor
+    bg_music_path = get_local_background_music()
+    final_video = CompositeVideoClip([final_bg_clip, txt_clip])
+    
+    if bg_music_path:
+        # Fon müziği ses seviyesi 0.15'e düşürülerek (arkada kalması için) ayarlanır
+        bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.15)
+        final_video = final_video.with_audio(bg_music_clip)
+
     output_video_path = "final_shorts.mp4"
     
     final_video.write_videofile(
