@@ -20,23 +20,34 @@ from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudio
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 1. BASİT İNGİLİZCE VE ÖZGÜN BİLGİ ÜRETİMİ
+# 1. GENİŞLETİLMİŞ KONU HAVUZU VE ÖZGÜN BİLGİ ÜRETİMİ
 def generate_fact_and_image_prompt():
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY bulunamadı!")
 
+    # Çeşitliliği ve verimi artırmak için genişletilmiş konu listesi
     topics = [
-        "astronomy and space", "deep sea creatures", "human brain marvels", 
-        "ancient world secrets", "bizarre nature facts", "unusual geography"
+        "deep space anomalies and black holes",
+        "bizarre deep sea creatures",
+        "mysterious human brain phenomena",
+        "unsolved ancient history trivia",
+        "unusual geography and hidden places",
+        "weird animal behavior and adaptations",
+        "microscopic world and quantum physics facts",
+        "extreme weather phenomena and natural wonders",
+        "bizarre historical records and coincidences",
+        "obscure tech and futuristic science facts"
     ]
     chosen_topic = random.choice(topics)
     timestamp_seed = int(time.time() * 1000)
 
+    # Tekrarı önleyen ve spesifik detay/rakam isteyen güncel prompt
     prompt = (
         f"Generate a unique JSON response with two keys.\n"
         f"Unique Seed: {timestamp_seed}\n"
         f"Topic: {chosen_topic}\n"
-        "1. 'fact': TODAY'S FACT! A 100% scientifically accurate, surprising short fact in VERY SIMPLE, basic English (under 15 words). Do not use cliché facts.\n"
+        "1. 'fact': TODAY'S FACT! A 100% scientifically accurate, mind-blowing short fact in VERY SIMPLE, basic English (under 15 words). "
+        "CRITICAL: Do NOT use cliché or common facts. Must include a specific number, scale, or rare detail to avoid repetition.\n"
         "2. 'image_prompt': A high quality visual prompt in English to generate a background picture representing this exact fact.\n"
         "Return ONLY raw JSON: {\"fact\": \"...\", \"image_prompt\": \"...\"}"
     )
@@ -109,10 +120,6 @@ def download_ai_image(image_prompt):
 
 # 3. YEREL KLASÖRDEN RASTGELE YOUTUBE KİTAPLIĞI MÜZİĞİ SEÇME
 def get_local_background_music():
-    """
-    Telif riski olmaması için YouTube Audio Library'den indirdiğiniz 
-    mp3 dosyalarını projenizin 'assets/music' klasörüne koyun.
-    """
     music_folder = "assets/music"
     if not os.path.exists(music_folder):
         os.makedirs(music_folder, exist_ok=True)
@@ -237,12 +244,10 @@ def build_shorts_video():
     final_bg_clip = CompositeVideoClip([zoomed_bg.with_position('center')], size=(1080, 1920)).with_duration(duration)
     txt_clip = ImageClip(overlay_path).with_duration(duration)
     
-    # Arka plan müziği yerel klasörden çekiliyor
     bg_music_path = get_local_background_music()
     final_video = CompositeVideoClip([final_bg_clip, txt_clip])
     
     if bg_music_path:
-        # Fon müziği ses seviyesi 0.15'e düşürülerek (arkada kalması için) ayarlanır
         bg_music_clip = AudioFileClip(bg_music_path).subclipped(0, duration).with_volume_scaled(0.15)
         final_video = final_video.with_audio(bg_music_clip)
 
