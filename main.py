@@ -215,7 +215,7 @@ def upload_to_youtube(video_path, fact_text):
     body = {
         'snippet': {
             'title': f"TODAY'S FACT! {fact_text[:40]}... #Shorts",
-            'description': f"{fact_text}\n\n#shorts #todaysfact #facts #didyouknow #science",
+            'description': f"{fact_text}\n\n#shorts #todaysfact #facts #didyouknow #science  This video's image was made by Pollinations Ai and the fact was found by Google Gemini",
             'tags': ['shorts', 'todaysfact', 'facts', 'didyouknow'],
             'categoryId': '27'
         },
